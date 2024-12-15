@@ -8,14 +8,16 @@ Created on Fri Dec 13 16:37:58 2024
 import os
 import tempfile
 import ollama
+import requests
 import streamlit as st
 from langchain.document_loaders import PyMuPDFLoader
 from langchain.schema import Document
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from streamlit.runtime.uploaded_file_manager import UploadedFile
 from sentence_transformers import CrossEncoder
-import chromadb
-from chromadb.utils.embedding_functions.ollama_embedding_function import OllamaEmbeddingFunction
+
+from langchain.vectorstores import FAISS
+from langchain.embeddings.base import Embeddings
 
 system_prompt = """
 You are an AI assistant tasked with providing detailed answers based solely on the given context. Your goal is to analyze the information provided and formulate a comprehensive, well-structured response to the question.
@@ -40,6 +42,33 @@ Format your response as follows:
 Important: Base your entire response solely on the information provided in the context. Do not include any external knowledge or assumptions not present in the given text.
 """
 
+# Custom Ollama Embeddings class
+class OllamaEmbeddings(Embeddings):
+    def __init__(self, url: str, model_name: str):
+        self.url = url
+        self.model_name = model_name
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return [self._get_embedding(text) for text in texts]
+
+    def embed_query(self, text: str) -> list[float]:
+        return self._get_embedding(text)
+
+    def _get_embedding(self, text: str) -> list[float]:
+        payload = {"prompt": text, "model": self.model_name}
+        response = requests.post(self.url, json=payload)
+        response.raise_for_status()
+        data = response.json()
+        # Ensure your Ollama endpoint returns embeddings in a field named "embedding"
+        return data["embedding"]
+
+# Initialize embeddings and FAISS vector store once
+EMBEDDINGS = OllamaEmbeddings(
+    url="http://localhost:11434/api/embeddings",
+    model_name="nomic-embed-text:latest",
+)
+
+FAISS_INDEX_PATH = "./faiss_index"  # path where we'll store/load the FAISS index
 
 
 def process_document(uploaded_file: UploadedFile) -> list[Document]:
@@ -58,43 +87,45 @@ def process_document(uploaded_file: UploadedFile) -> list[Document]:
     )
     return text_splitter.split_documents(docs)
 
-def get_vector_collection() -> chromadb.Collection:
-    ollama_ef = OllamaEmbeddingFunction(
-        url="http://localhost:11434/api/embeddings",
-        model_name="nomic-embed-text:latest",
-    )
 
-    chroma_client = chromadb.PersistentClient(path="./demo-rag-chroma")
-    return chroma_client.get_or_create_collection(
-        name="rag_app",
-        embedding_function=ollama_ef,
-        metadata={"hnsw:space": "cosine"},
-    )
+def load_vectorstore() -> FAISS:
+    # If a FAISS index already exists, load it; otherwise return a new empty store.
+    if os.path.exists(FAISS_INDEX_PATH):
+        return FAISS.load_local(FAISS_INDEX_PATH, EMBEDDINGS)
+    else:
+        # Return an empty FAISS store (we'll add documents to it later)
+        return FAISS.from_texts([], EMBEDDINGS)
+
+
+def save_vectorstore(vectorstore: FAISS):
+    # Save the FAISS index locally
+    vectorstore.save_local(FAISS_INDEX_PATH)
+
 
 def add_to_vector_collection(all_splits: list[Document], file_name: str):
+    vectorstore = load_vectorstore()
 
-    collection = get_vector_collection()
-    documents, metadatas, ids = [], [], []
+    # Extract the text and metadata from the documents
+    texts = [doc.page_content for doc in all_splits]
+    metadatas = [doc.metadata for doc in all_splits]
 
-    for idx, split in enumerate(all_splits):
-        documents.append(split.page_content)
-        metadatas.append(split.metadata)
-        ids.append(f"{file_name}_{idx}")
+    # Add the new texts to the FAISS vectorstore
+    vectorstore.add_texts(texts=texts, metadatas=metadatas, ids=[f"{file_name}_{i}" for i in range(len(texts))])
 
-    collection.upsert(
-        documents=documents,
-        metadatas=metadatas,
-        ids=ids,
-    )
+    save_vectorstore(vectorstore)
     st.success("Data added to the vector store!")
 
+
 def query_collection(prompt: str, n_results: int = 10):
+    vectorstore = load_vectorstore()
+    # Use similarity_search on FAISS
+    docs = vectorstore.similarity_search(prompt, k=n_results)
+    # Convert docs to a format similar to what you used before
+    # docs is a list of Documents, so let's return just the texts for now.
+    return docs
 
-    collection = get_vector_collection()
-    results = collection.query(query_texts=[prompt], n_results=n_results)
-    return results
+
 def call_llm(context: str, prompt: str):
-
     response = ollama.chat(
         model="llama3.2",
         stream=True,
@@ -116,23 +147,31 @@ def call_llm(context: str, prompt: str):
             break
 
 
-def re_rank_cross_encoders(documents: list[str]) -> tuple[str, list[int]]:
-
+def re_rank_cross_encoders(documents: list[str], query: str) -> tuple[str, list[int]]:
     relevant_text = ""
     relevant_text_ids = []
 
     encoder_model = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
-    ranks = encoder_model.rank(prompt, documents, top_k=3)
-    for rank in ranks:
-        relevant_text += documents[rank["corpus_id"]]
-        relevant_text_ids.append(rank["corpus_id"])
+    # CrossEncoder's rank method expects two parameters: query and documents
+    # The returned object typically contains scores or ranks. Check the CrossEncoder docs.
+    # If `rank()` isn't available, you might have to sort by scores manually.
+    scores = encoder_model.predict([(query, d) for d in documents])
+    # Sort documents by score (descending)
+    ranked = sorted(enumerate(documents), key=lambda x: scores[x[0]], reverse=True)
+    top_3 = ranked[:3]
+
+    for idx, doc_text in top_3:
+        relevant_text += doc_text + "\n"
+        relevant_text_ids.append(idx)
 
     return relevant_text, relevant_text_ids
 
 
 if __name__ == "__main__":
+    st.set_page_config(page_title="RAG Question Answer")
+
     with st.sidebar:
-        st.set_page_config(page_title="RAG Question Answer")
+        st.header("🗣️ RAG Question Answer")
         uploaded_file = st.file_uploader(
             "**📑 Upload PDF files for QnA**", type=["pdf"], accept_multiple_files=False
         )
@@ -141,26 +180,30 @@ if __name__ == "__main__":
         if uploaded_file and process:
             normalize_uploaded_file_name = uploaded_file.name.translate(
                 str.maketrans({"-": "_", ".": "_", " ": "_"})
-                )
+            )
             all_splits = process_document(uploaded_file)
             add_to_vector_collection(all_splits, normalize_uploaded_file_name)
     
     st.header("🗣️ RAG Question Answer")
     prompt = st.text_area("**Ask a question related to your document:**")
-    ask = st.button(
-        "🔥 Ask",
-    )
+    ask = st.button("🔥 Ask")
     
     if ask and prompt:
         results = query_collection(prompt)
-        context = results.get("documents")[0]
-        relevant_text, relevant_text_ids = re_rank_cross_encoders(context)
+        # results is a list of Documents
+        context_docs = [doc.page_content for doc in results]
+        relevant_text, relevant_text_ids = re_rank_cross_encoders(context_docs, prompt)
         response = call_llm(context=relevant_text, prompt=prompt)
-        st.write_stream(response)
+
+        # Stream the response to the UI
+        for r in response:
+            st.write(r, end="")
 
         with st.expander("See retrieved documents"):
-            st.write(results)
+            for doc in results:
+                st.write(doc.page_content)
 
         with st.expander("See most relevant document ids"):
             st.write(relevant_text_ids)
             st.write(relevant_text)
+
