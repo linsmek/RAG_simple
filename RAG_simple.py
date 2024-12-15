@@ -16,8 +16,6 @@ from streamlit.runtime.uploaded_file_manager import UploadedFile
 import chromadb
 from chromadb.utils.embedding_functions.ollama_embedding_function import OllamaEmbeddingFunction
 
-# Set page config only once at the start of the script
-st.set_page_config(page_title="RAG Question Answer")
 
 def process_document(uploaded_file: UploadedFile) -> list[Document]:
     temp_file = tempfile.NamedTemporaryFile("wb", suffix=".pdf", delete=False)
@@ -67,17 +65,21 @@ def add_to_vector_collection(all_splits: list[Document], file_name: str):
 
 if __name__ == "__main__":
     with st.sidebar:
-        # Remove the second st.set_page_config call here.
-        st.header("🗣️ RAG Question Answer")
+        st.set_page_config(page_title="RAG Question Answer")
         uploaded_file = st.file_uploader(
             "**📑 Upload PDF files for QnA**", type=["pdf"], accept_multiple_files=False
         )
         process = st.button("⚡️ Process")
 
-    if uploaded_file and process:
-        normalize_uploaded_file_name = uploaded_file.name.translate(
-            str.maketrans({"-": "_", ".": "_", " ": "_"})
-        )
-        all_splits = process_document(uploaded_file)
-        add_to_vector_collection(all_splits, normalize_uploaded_file_name)
-
+        if uploaded_file and process:
+            normalize_uploaded_file_name = uploaded_file.name.translate(
+                str.maketrans({"-": "_", ".": "_", " ": "_"})
+                )
+            all_splits = process_document(uploaded_file)
+            add_to_vector_collection(all_splits, normalize_uploaded_file_name)
+    
+    st.header("🗣️ RAG Question Answer")
+    prompt = st.text_area("**Ask a question related to your document:**")
+    ask = st.button(
+        "🔥 Ask",
+    )
