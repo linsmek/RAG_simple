@@ -15,6 +15,7 @@ from streamlit.runtime.uploaded_file_manager import UploadedFile
 
 import chromadb
 from chromadb.utils.embedding_functions.ollama_embedding_function import OllamaEmbeddingFunction
+
 # Set page config only once at the start of the script
 st.set_page_config(page_title="RAG Question Answer")
 
@@ -35,7 +36,6 @@ def process_document(uploaded_file: UploadedFile) -> list[Document]:
     return text_splitter.split_documents(docs)
 
 def get_vector_collection() -> chromadb.Collection:
-
     ollama_ef = OllamaEmbeddingFunction(
         url="http://localhost:11434/api/embeddings",
         model_name="nomic-embed-text:latest",
@@ -65,10 +65,9 @@ def add_to_vector_collection(all_splits: list[Document], file_name: str):
     )
     st.success("Data added to the vector store!")
 
-
 if __name__ == "__main__":
     with st.sidebar:
-        st.set_page_config(page_title="RAG Question Answer")
+        # Remove the second st.set_page_config call here.
         st.header("🗣️ RAG Question Answer")
         uploaded_file = st.file_uploader(
             "**📑 Upload PDF files for QnA**", type=["pdf"], accept_multiple_files=False
@@ -76,10 +75,9 @@ if __name__ == "__main__":
         process = st.button("⚡️ Process")
 
     if uploaded_file and process:
-        if uploaded_file and process:
-            normalize_uploaded_file_name = uploaded_file.name.translate(
-                str.maketrans({"-": "_", ".": "_", " ": "_"})
-            )
-            all_splits = process_document(uploaded_file)
-            add_to_vector_collection(all_splits, normalize_uploaded_file_name)
+        normalize_uploaded_file_name = uploaded_file.name.translate(
+            str.maketrans({"-": "_", ".": "_", " ": "_"})
+        )
+        all_splits = process_document(uploaded_file)
+        add_to_vector_collection(all_splits, normalize_uploaded_file_name)
 
