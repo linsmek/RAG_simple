@@ -13,7 +13,7 @@ from langchain.document_loaders import PyMuPDFLoader
 from langchain.schema import Document
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from streamlit.runtime.uploaded_file_manager import UploadedFile
-
+from sentence_transformers import CrossEncoder
 import chromadb
 from chromadb.utils.embedding_functions.ollama_embedding_function import OllamaEmbeddingFunction
 
@@ -115,6 +115,21 @@ def call_llm(context: str, prompt: str):
         else:
             break
 
+
+def re_rank_cross_encoders(documents: list[str]) -> tuple[str, list[int]]:
+
+    relevant_text = ""
+    relevant_text_ids = []
+
+    encoder_model = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+    ranks = encoder_model.rank(prompt, documents, top_k=3)
+    for rank in ranks:
+        relevant_text += documents[rank["corpus_id"]]
+        relevant_text_ids.append(rank["corpus_id"])
+
+    return relevant_text, relevant_text_ids
+
+
 if __name__ == "__main__":
     with st.sidebar:
         st.set_page_config(page_title="RAG Question Answer")
@@ -139,5 +154,13 @@ if __name__ == "__main__":
     if ask and prompt:
         results = query_collection(prompt)
         context = results.get("documents")[0]
-        response = call_llm(context=context, prompt=prompt)
+        relevant_text, relevant_text_ids = re_rank_cross_encoders(context)
+        response = call_llm(context=relevant_text, prompt=prompt)
         st.write_stream(response)
+
+        with st.expander("See retrieved documents"):
+            st.write(results)
+
+        with st.expander("See most relevant document ids"):
+            st.write(relevant_text_ids)
+            st.write(relevant_text)
