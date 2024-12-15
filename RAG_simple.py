@@ -55,13 +55,17 @@ class OllamaEmbeddings(Embeddings):
         return self._get_embedding(text)
 
     def _get_embedding(self, text: str) -> list[float]:
-        # Implement the logic to call Ollama's embedding endpoint and return a vector.
-        # The endpoint should return a JSON with "embedding": [...]
-        # Example:
-        # response = requests.post(self.url, json={"prompt": text, "model": self.model_name})
-        # data = response.json()
-        # return data["embedding"]
-        raise NotImplementedError("Implement Ollama embedding retrieval logic here.")
+        # Call Ollama embeddings endpoint
+        response = requests.post(
+            self.url,
+            json={"prompt": text, "model": self.model_name},
+            timeout=30
+        )
+        response.raise_for_status()
+        data = response.json()
+        if "embedding" not in data:
+            raise ValueError("Expected 'embedding' in response. Got: {}".format(data))
+        return data["embedding"]
 
 EMBEDDINGS = OllamaEmbeddings(
     url="http://localhost:11434/api/embeddings",
@@ -84,9 +88,7 @@ def process_document(uploaded_file: UploadedFile) -> list[Document]:
     )
     return text_splitter.split_documents(docs)
 
-
 def load_vectorstore() -> FAISS:
-    # If the index file exists, load it; otherwise return None to indicate we must create it later.
     if os.path.exists(FAISS_INDEX_PATH):
         return FAISS.load_local(FAISS_INDEX_PATH, EMBEDDINGS)
     return None
@@ -104,10 +106,11 @@ def add_to_vector_collection(all_splits: list[Document], file_name: str):
     for i, mid in enumerate(ids):
         metadatas[i]["id"] = mid
 
-    # If no vectorstore exists yet, create one with these documents.
     if vectorstore is None:
+        # Create a new FAISS vectorstore from these texts
         vectorstore = FAISS.from_texts(documents, EMBEDDINGS, metadatas=metadatas)
     else:
+        # Add texts to existing vectorstore
         vectorstore.add_texts(documents, metadatas=metadatas)
 
     save_vectorstore(vectorstore)
@@ -125,7 +128,7 @@ def query_collection(prompt: str, n_results: int = 10):
     metadatas = [doc.metadata for doc in results_docs]
     ids = [m.get("id", f"doc_{i}") for i, m in enumerate(metadatas)]
 
-    # Mimic Chroma's return format:
+    # Mimic Chroma's return format
     return {
         "documents": [documents],
         "metadatas": [metadatas],
@@ -153,32 +156,23 @@ def call_llm(context: str, prompt: str):
         else:
             break
 
-def re_rank_cross_encoders(documents: list[str]) -> tuple[str, list[int]]:
+def re_rank_cross_encoders(documents: list[str], query: str) -> tuple[str, list[int]]:
     relevant_text = ""
     relevant_text_ids = []
     encoder_model = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
 
-    # 'rank' method usage: 
-    # According to sentence-transformers docs, rank() doesn't exist in all versions. 
-    # If not available, manually compute scores and sort.
-    # Here's a possible fallback:
-    # scores = encoder_model.predict([(prompt, doc) for doc in documents])
-    # ranked = sorted(enumerate(documents), key=lambda x: scores[x[0]], reverse=True)
-    # top_3 = ranked[:3]
+    # Compute scores for each document
+    pairs = [(query, doc) for doc in documents]
+    scores = encoder_model.predict(pairs)
+    # Sort documents by score (descending)
+    ranked = sorted(enumerate(documents), key=lambda x: scores[x[0]], reverse=True)
+    top_3 = ranked[:3]
 
-    # If 'rank' is available as you had it:
-    # ranks = encoder_model.rank(prompt, documents, top_k=3)
-    # Adapt as needed if rank() is not a valid method in your environment.
-
-    # Assuming 'rank' works as you wrote:
-    global prompt  # Ensure prompt is defined in this scope or pass it as a parameter
-    ranks = encoder_model.rank(prompt, documents, top_k=3)
-    for rank_info in ranks:
-        relevant_text += documents[rank_info["corpus_id"]]
-        relevant_text_ids.append(rank_info["corpus_id"])
+    for idx, doc_text in top_3:
+        relevant_text += doc_text + "\n"
+        relevant_text_ids.append(idx)
 
     return relevant_text, relevant_text_ids
-
 
 if __name__ == "__main__":
     st.set_page_config(page_title="RAG Question Answer")
@@ -198,20 +192,20 @@ if __name__ == "__main__":
             add_to_vector_collection(all_splits, normalize_uploaded_file_name)
 
     st.header("🗣️ RAG Question Answer")
-    prompt = st.text_area("**Ask a question related to your document:**")
+    user_prompt = st.text_area("**Ask a question related to your document:**")
     ask = st.button("🔥 Ask")
 
-    if ask and prompt:
-        results = query_collection(prompt)
+    if ask and user_prompt:
+        results = query_collection(user_prompt)
         context_docs = results.get("documents", [[]])[0]
 
         if not context_docs:
             st.write("No documents available. Please upload and process a PDF first.")
         else:
-            relevant_text, relevant_text_ids = re_rank_cross_encoders(context_docs)
-            response = call_llm(context=relevant_text, prompt=prompt)
+            relevant_text, relevant_text_ids = re_rank_cross_encoders(context_docs, user_prompt)
+            response = call_llm(context=relevant_text, prompt=user_prompt)
 
-            # Stream the response
+            # Stream response chunks
             for r in response:
                 st.write(r)
 
