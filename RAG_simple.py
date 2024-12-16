@@ -204,8 +204,12 @@ if __name__ == "__main__":
             relevant_text, relevant_text_ids = re_rank_cross_encoders(context_docs, user_prompt)
             response = call_llm(context=relevant_text, prompt=user_prompt)
 
+            # Accumulate the streamed response and display progressively
+            placeholder = st.empty()
+            full_response = ""
             for r in response:
-                st.write(r)
+                full_response += r
+                placeholder.markdown(full_response)
 
             with st.expander("See retrieved documents"):
                 st.write(results)
