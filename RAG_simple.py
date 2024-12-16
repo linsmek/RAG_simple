@@ -7,36 +7,68 @@ Created on Fri Dec 13 16:37:58 2024
 """
 import os
 import tempfile
+import requests
 import ollama
 import streamlit as st
 from langchain.document_loaders import PyMuPDFLoader
 from langchain.schema import Document
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from streamlit.runtime.uploaded_file_manager import UploadedFile
+from langchain.embeddings.base import Embeddings
+from langchain.vectorstores import FAISS
 import chromadb
 from chromadb.utils.embedding_functions.ollama_embedding_function import OllamaEmbeddingFunction
-from langchain.vectorstores import FAISS
 
-FAISS_INDEX_PATH = "./faiss_index"
-
-# Enhanced system prompt
+# System Prompt
 system_prompt = """
-To answer the question:
-1. Thoroughly analyze the context, identifying key information relevant to the question.
-2. Include all relevant history from previous user questions and responses (if applicable).
-3. Organize your response logically, ensuring all parts of the question are addressed.
-4. If the context doesn't contain sufficient information, state this clearly, or if relevant, add suggestions based on your knowledge.
-Guidelines:
-1. For unrelated or vague questions, respond appropriately without referencing documents.
-2. If the question relates to a career or general topic (not in the documents), provide thoughtful suggestions, but clearly mention this is not sourced from the documents.
-3. If the user asks you about a previous question asked, look at it in your "history," re-state it, and answer it.
-Format:
-1. Use bullet points, numbered lists, or headings for readability.
-2. Ensure responses are structured and concise.
+You are an AI assistant tasked with providing detailed answers based solely on the given context. 
+Your goal is to analyze the information provided and formulate a comprehensive, well-structured response to the question.
 
-Important: Base your answers solely on the provided context and history, unless instructed otherwise.
+context will be passed as "Context:"
+user question will be passed as "Question:"
+
+Guidelines:
+1. Use only the provided context for answering.
+2. Use a logical flow of information and proper formatting.
+3. If insufficient context is provided, clearly state it.
+
+Important: Do not include any external knowledge or assumptions not present in the given text.
 """
 
+# FAISS Index Path
+FAISS_INDEX_PATH = "./faiss_index"
+
+# Ollama Embeddings Class
+class OllamaEmbeddings(Embeddings):
+    def __init__(self, url: str, model_name: str):
+        self.url = url
+        self.model_name = model_name
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return [self._get_embedding(t) for t in texts]
+
+    def embed_query(self, text: str) -> list[float]:
+        return self._get_embedding(text)
+
+    def _get_embedding(self, text: str) -> list[float]:
+        response = requests.post(
+            self.url,
+            json={"prompt": text, "model": self.model_name},
+            timeout=30
+        )
+        response.raise_for_status()
+        data = response.json()
+        if "embedding" not in data:
+            raise ValueError(f"Expected 'embedding' in response. Got: {data}")
+        return data["embedding"]
+
+# Instantiate EMBEDDINGS
+EMBEDDINGS = OllamaEmbeddings(
+    url="http://localhost:11434/api/embeddings",
+    model_name="nomic-embed-text:latest",
+)
+
+# Process PDF Documents
 def process_document(uploaded_file: UploadedFile, chunk_size: int, chunk_overlap: int) -> list[Document]:
     temp_file = tempfile.NamedTemporaryFile("wb", suffix=".pdf", delete=False)
     temp_file.write(uploaded_file.read())
@@ -54,7 +86,7 @@ def process_document(uploaded_file: UploadedFile, chunk_size: int, chunk_overlap
     return text_splitter.split_documents(docs)
 
 # FAISS Functions
-def load_faiss_vectorstore():
+def load_faiss_vectorstore() -> FAISS:
     if os.path.exists(FAISS_INDEX_PATH):
         return FAISS.load_local(FAISS_INDEX_PATH, EMBEDDINGS, allow_dangerous_deserialization=True)
     return None
@@ -68,14 +100,14 @@ def get_chromadb_collection(space: str) -> chromadb.Collection:
         url="http://localhost:11434/api/embeddings",
         model_name="nomic-embed-text:latest",
     )
-    chroma_client = chromadb.PersistentClient(path="./demo-rag-chroma")
+    chroma_client = chromadb.PersistentClient(path="./chroma_store")
     return chroma_client.get_or_create_collection(
         name="rag_app",
         embedding_function=ollama_ef,
         metadata={"hnsw:space": space},
     )
 
-# Dynamic Functions
+# Add to Vector Collection
 def add_to_vector_collection(all_splits: list[Document], file_name: str, space: str, backend: str):
     documents = [doc.page_content for doc in all_splits]
     metadatas = [doc.metadata if doc.metadata else {} for doc in all_splits]
@@ -93,6 +125,7 @@ def add_to_vector_collection(all_splits: list[Document], file_name: str, space: 
         collection.upsert(documents=documents, metadatas=metadatas, ids=ids)
     st.success(f"Data from {file_name} added to the {backend} vector store!")
 
+# Query Collection
 def query_collection(prompt: str, space: str, backend: str, n_results: int = 10):
     if backend == "FAISS":
         vectorstore = load_faiss_vectorstore()
@@ -108,6 +141,28 @@ def query_collection(prompt: str, space: str, backend: str, n_results: int = 10)
         results = collection.query(query_texts=[prompt], n_results=n_results)
         return results
 
+# Call LLM
+def call_llm(context: str, prompt: str, history: list[dict]):
+    history_text = "\n\n".join(
+        [f"Q: {entry['question']}\nA: {entry['answer']}" for entry in history]
+    )
+    full_context = f"{history_text}\n\n{context}"
+
+    response = ollama.chat(
+        model="llama3.2",
+        stream=True,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"Context: {full_context}\n\nQuestion: {prompt}"},
+        ],
+    )
+    for chunk in response:
+        if not chunk["done"]:
+            yield chunk["message"]["content"]
+        else:
+            break
+
+# Main App
 if __name__ == "__main__":
     st.set_page_config(page_title="RAG Question Answer")
 
