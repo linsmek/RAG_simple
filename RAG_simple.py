@@ -98,7 +98,7 @@ def initialize_chromadb() -> chromadb.Client:
     # Updated ChromaDB initialization
     settings = Settings(
         persist_directory="./chroma_data",
-        chroma_api_impl="local",
+        chroma_api_impl="duckdb+parquet",
     )
     return chromadb.Client(settings=settings)
 
@@ -172,4 +172,3 @@ if __name__ == "__main__":
         else:
             response = call_llm(context="\n".join(context), prompt=prompt)
             st.write(response)
-
