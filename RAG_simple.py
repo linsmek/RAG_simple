@@ -29,22 +29,20 @@ To answer the question:
 3. Formulate a detailed answer that directly addresses the question, using only the information provided in the context.
 4. Ensure your answer is comprehensive, covering all relevant aspects found in the context.
 5. If the context doesn't contain sufficient information to fully answer the question, state this clearly in your response.
-6. Ask clarification question if the question is too vague: for example if the question is "when are the office hours?" you can ask the user to specify which class is he or she talking about. 
-7. If the request is just a general question such as "hi!" or "how are you?" or a simple math calculation you should be able to do it
-8. Don't come up with fake names or fake information but if you are asked about something that is not specified in the documents such as "for what career is this class relevant?" you should mention that "even though it is not indicated in the syllabus " and then continue with a suggestion
-9. You should be able to process information comming from different documents for questions such as "list the professors for each class" you should be able to state that Thibault Mastrolia is the professor for "Risk , Simulation, and Data Analysis", Lizeng Zhang is the professor for "introduction to financial engineering" and so on till you listed the professors for each class. Same goes if the question is asking you for the pre requsiites for each class, the office hours for each class and so on.
+6. Ask clarification questions if the question is too vague.
+7. If the request is general (e.g., "hi!" or "how are you?"), respond appropriately.
+8. Avoid fabricating information but offer logical suggestions if data is missing in the documents.
+9. Process information from multiple documents, providing a consolidated and detailed answer when necessary.
 
 Format your response as follows:
 1. Use clear, concise language.
 2. Organize your answer into paragraphs for readability.
-3. Use bullet points or numbered lists where appropriate to break down complex information.
-4. If relevant, include any headings or subheadings to structure your response.
-5. Ensure proper grammar, punctuation, and spelling throughout your answer.
+3. Use bullet points or numbered lists where appropriate.
+4. Use headings or subheadings if relevant.
+5. Ensure proper grammar, punctuation, and spelling.
 
-Important: Base your entire response solely on the information provided in the context. Do not include any external knowledge or assumptions not present in the given text (except for situations such as 7. adn 8.).
+Important: Base your entire response solely on the information provided in the context. Do not include any external knowledge or assumptions not present in the given text.
 """
-
-
 
 def process_document(uploaded_file: UploadedFile) -> list[Document]:
     temp_file = tempfile.NamedTemporaryFile("wb", suffix=".pdf", delete=False)
@@ -76,7 +74,6 @@ def get_vector_collection() -> chromadb.Collection:
     )
 
 def add_to_vector_collection(all_splits: list[Document], file_name: str):
-
     collection = get_vector_collection()
     documents, metadatas, ids = [], [], []
 
@@ -90,15 +87,14 @@ def add_to_vector_collection(all_splits: list[Document], file_name: str):
         metadatas=metadatas,
         ids=ids,
     )
-    st.success("Data added to the vector store!")
+    st.success(f"Data from {file_name} added to the vector store!")
 
 def query_collection(prompt: str, n_results: int = 10):
-
     collection = get_vector_collection()
     results = collection.query(query_texts=[prompt], n_results=n_results)
     return results
-def call_llm(context: str, prompt: str):
 
+def call_llm(context: str, prompt: str):
     response = ollama.chat(
         model="llama3.2",
         stream=True,
@@ -119,54 +115,66 @@ def call_llm(context: str, prompt: str):
         else:
             break
 
-
-def re_rank_cross_encoders(documents: list[str]) -> tuple[str, list[int]]:
-
+def re_rank_cross_encoders(documents: list[str], query: str) -> tuple[str, list[int]]:
     relevant_text = ""
     relevant_text_ids = []
 
     encoder_model = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
-    ranks = encoder_model.rank(prompt, documents, top_k=3)
-    for rank in ranks:
-        relevant_text += documents[rank["corpus_id"]]
-        relevant_text_ids.append(rank["corpus_id"])
+    pairs = [(query, doc) for doc in documents]
+    scores = encoder_model.predict(pairs)
+    ranked = sorted(enumerate(documents), key=lambda x: scores[x[0]], reverse=True)
+    top_3 = ranked[:3]
+
+    for idx, doc_text in top_3:
+        relevant_text += doc_text + "\n"
+        relevant_text_ids.append(idx)
 
     return relevant_text, relevant_text_ids
 
-
 if __name__ == "__main__":
-    with st.sidebar:
-        st.set_page_config(page_title="RAG Question Answer")
-        uploaded_file = st.file_uploader(
-            "**📑 Upload PDF files for QnA**", type=["pdf"], accept_multiple_files=False
-        )
-        process = st.button("⚡️ Process")
+    st.set_page_config(page_title="RAG Question Answer")
 
-        if uploaded_file and process:
-            normalize_uploaded_file_name = uploaded_file.name.translate(
-                str.maketrans({"-": "_", ".": "_", " ": "_"})
+    with st.sidebar:
+        st.header("🗣️ RAG Question Answer")
+        uploaded_files = st.file_uploader(
+            "**📑 Upload PDF files for QnA**",
+            type=["pdf"],
+            accept_multiple_files=True,
+        )
+        process = st.button("⚡️ Process All")
+
+        if uploaded_files and process:
+            for uploaded_file in uploaded_files:
+                file_name = uploaded_file.name.translate(
+                    str.maketrans({"-": "_", ".": "_", " ": "_"})
                 )
-            all_splits = process_document(uploaded_file)
-            add_to_vector_collection(all_splits, normalize_uploaded_file_name)
+                all_splits = process_document(uploaded_file)
+                add_to_vector_collection(all_splits, file_name)
     
     st.header("🗣️ RAG Question Answer")
-    prompt = st.text_area("**Ask a question related to your document:**")
-    ask = st.button(
-        "🔥 Ask",
-    )
-    
-    if ask and prompt:
-        results = query_collection(prompt)
-        context = results.get("documents")[0]
-        relevant_text, relevant_text_ids = re_rank_cross_encoders(context)
-        response = call_llm(context=relevant_text, prompt=prompt)
-        st.write_stream(response)
+    user_prompt = st.text_area("**Ask a question related to your documents:**")
+    ask = st.button("🔥 Ask")
 
-        with st.expander("See retrieved documents"):
-            st.write(results)
+    if ask and user_prompt:
+        results = query_collection(user_prompt)
+        context_docs = results.get("documents", [[]])[0]
 
-        with st.expander("See most relevant document ids"):
-            st.write(relevant_text_ids)
-            st.write(relevant_text)
-    
+        if not context_docs:
+            st.write("No documents available. Please upload and process PDFs first.")
+        else:
+            relevant_text, relevant_text_ids = re_rank_cross_encoders(context_docs, user_prompt)
+            response = call_llm(context=relevant_text, prompt=user_prompt)
+
+            placeholder = st.empty()
+            full_response = ""
+            for r in response:
+                full_response += r
+                placeholder.markdown(full_response)
+
+            with st.expander("See retrieved documents"):
+                st.write(results)
+
+            with st.expander("See most relevant document IDs"):
+                st.write(relevant_text_ids)
+                st.write(relevant_text)
 
