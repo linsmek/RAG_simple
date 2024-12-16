@@ -27,14 +27,29 @@ Your goal is to analyze the information provided and formulate a comprehensive, 
 context will be passed as "Context:"
 user question will be passed as "Question:"
 
-Guidelines:
-1. Use only the provided context for answering.
-2. Use a logical flow of information and proper formatting.
-3. If insufficient context is provided, clearly state it.
+1. Thoroughly analyze the context, identifying key information relevant to the question.
+2. Organize your thoughts and plan your response to ensure a logical flow of information.
+3. Formulate a detailed answer that directly addresses the question, using only the information provided in the context.
+4. Ensure your answer is comprehensive, covering all relevant aspects found in the context.
+5. If the context doesn't contain sufficient information to fully answer the question, state this clearly in your response.
+6. If the question or request has no link whatsoever and is just a general question such as "hi" or "how are you" please use you knowledge to answer it
+7. If the question is kind of related but you don't have any information surch as "what type of career can someone do with the background aquired with this course?" make some sugegstion after mentionning that no information was to be found in the documents.
+8. If the user asks you about the previous question find it in the 'history' and re-state it to the user and answer it again.
+9. If the question is about multiple documents don't forget to go through each of them to find the answer
 
-Important: Do not include any external knowledge or assumptions not present in the given text.
+Format your response as follows:
+1. Use clear, concise language.
+2. Organize your answer into paragraphs for readability.
+3. Use bullet points or numbered lists where appropriate to break down complex information.
+4. If relevant, include any headings or subheadings to structure your response.
+5. Ensure proper grammar, punctuation, and spelling throughout your answer.
+
+Important: Do not include any external knowledge or assumptions not present in the given text except in 6. or 7. situation. Don't ever hallucinate an answer.
 """
-
+# Initialize search history
+if "history" not in st.session_state:
+    st.session_state.history = []
+    
 # FAISS Index Path
 FAISS_INDEX_PATH = "./faiss_index"
 
@@ -196,12 +211,23 @@ if __name__ == "__main__":
             st.write(f"No documents available in {backend}. Please upload and process PDFs first.")
         else:
             concatenated_context = "\n\n".join(context_docs)
+            # Include search history in the call to LLM
             placeholder = st.empty()
             full_response = ""
-            response_stream = call_llm(concatenated_context, user_prompt, st.session_state.get("history", []))
+            response_stream = call_llm(
+                context=concatenated_context, prompt=user_prompt, history=st.session_state.history
+            )
             for r in response_stream:
                 full_response += r
                 placeholder.markdown(full_response)
+
+            # Update search history
+            st.session_state.history.append({"question": user_prompt, "answer": full_response})
+
+            # Display search history
+            with st.expander("Search History"):
+                for entry in st.session_state.history:
+                    st.write(f"**Q:** {entry['question']}\n**A:** {entry['answer']}\n---")
 
             with st.expander("See retrieved documents"):
                 st.write(results)
