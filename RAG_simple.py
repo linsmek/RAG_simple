@@ -54,7 +54,7 @@ def process_document(uploaded_file: UploadedFile, chunk_size: int, chunk_overlap
     )
     return text_splitter.split_documents(docs)
 
-def get_vector_collection() -> chromadb.Collection:
+def get_vector_collection(space: str) -> chromadb.Collection:
     ollama_ef = OllamaEmbeddingFunction(
         url="http://localhost:11434/api/embeddings",
         model_name="nomic-embed-text:latest",
@@ -64,11 +64,11 @@ def get_vector_collection() -> chromadb.Collection:
     return chroma_client.get_or_create_collection(
         name="rag_app",
         embedding_function=ollama_ef,
-        metadata={"hnsw:space": "cosine"},
+        metadata={"hnsw:space": space},
     )
 
-def add_to_vector_collection(all_splits: list[Document], file_name: str):
-    collection = get_vector_collection()
+def add_to_vector_collection(all_splits: list[Document], file_name: str, space: str):
+    collection = get_vector_collection(space)
     documents, metadatas, ids = [], [], []
 
     for idx, split in enumerate(all_splits):
@@ -83,8 +83,8 @@ def add_to_vector_collection(all_splits: list[Document], file_name: str):
     )
     st.success(f"Data from {file_name} added to the vector store!")
 
-def query_collection(prompt: str, n_results: int = 10):
-    collection = get_vector_collection()
+def query_collection(prompt: str, space: str, n_results: int = 10):
+    collection = get_vector_collection(space)
     results = collection.query(query_texts=[prompt], n_results=n_results)
     return results
 
@@ -126,6 +126,13 @@ if __name__ == "__main__":
         )
         chunk_overlap = int(chunk_size * 0.2)  # 20% of chunk size
 
+        # Select distance metric
+        space = st.selectbox(
+            "**Choose Distance Metric:**",
+            options=["cosine", "euclidean", "dot"],
+            index=0
+        )
+
         uploaded_files = st.file_uploader(
             "**📑 Upload PDF files for QnA**",
             type=["pdf"],
@@ -139,14 +146,14 @@ if __name__ == "__main__":
                     str.maketrans({"-": "_", ".": "_", " ": "_"})
                 )
                 all_splits = process_document(uploaded_file, chunk_size, chunk_overlap)
-                add_to_vector_collection(all_splits, file_name)
+                add_to_vector_collection(all_splits, file_name, space)
     
     st.header("🗣️ RAG Question Answer")
     user_prompt = st.text_area("**Ask a question related to your documents:**")
     ask = st.button("🔥 Ask")
 
     if ask and user_prompt:
-        results = query_collection(user_prompt)
+        results = query_collection(user_prompt, space)
         context_docs = results.get("documents", [[]])[0]
 
         if not context_docs:
