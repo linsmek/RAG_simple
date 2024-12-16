@@ -88,11 +88,15 @@ def process_document(uploaded_file: UploadedFile, chunk_size: int, chunk_overlap
     return text_splitter.split_documents(docs)
 
 # Initialize Vector Store
-def initialize_vector_store(library: str, distance_metric: str):
+def initialize_vector_store(library: str, distance_metric: str, documents=None):
     if library == "FAISS":
         if os.path.exists(FAISS_INDEX_PATH):
             return FAISS.load_local(FAISS_INDEX_PATH, EMBEDDINGS, allow_dangerous_deserialization=True)
-        return FAISS.from_texts([], EMBEDDINGS)
+        elif documents and len(documents) > 0:
+            # Initialize FAISS with provided documents
+            return FAISS.from_texts(documents, EMBEDDINGS)
+        else:
+            raise ValueError("FAISS requires at least one document to initialize.")
     elif library == "ChromaDB":
         chroma_client = chromadb.PersistentClient(path=CHROMADB_PATH)
         return chroma_client.get_or_create_collection(
@@ -171,10 +175,12 @@ if __name__ == "__main__":
         process = st.button("Process Documents")
 
         if uploaded_files and process:
-            vector_store = initialize_vector_store(library, distance_metric)
+            documents = []
             for uploaded_file in uploaded_files:
                 all_splits = process_document(uploaded_file, chunk_size, chunk_overlap)
-                add_to_vector_collection(all_splits, vector_store, library)
+                documents.extend([doc.page_content for doc in all_splits])
+            vector_store = initialize_vector_store(library, distance_metric, documents=documents)
+            add_to_vector_collection(all_splits, vector_store, library)
 
     st.header("🗣️ Ask a Question")
     user_prompt = st.text_area("Your Question:")
