@@ -16,8 +16,8 @@ from langchain.schema import Document
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.embeddings.base import Embeddings
 from langchain.vectorstores import FAISS
-from chromadb import PersistentClient
-from chromadb.utils.embedding_functions import EmbeddingFunction
+import chromadb
+from chromadb.config import Settings
 
 # Enhanced system prompt
 system_prompt = """
@@ -37,8 +37,7 @@ Format your response as follows:
 1. Use clear, concise language.
 2. Organize your answer into paragraphs for readability.
 3. Use bullet points or numbered lists where appropriate to break down complex information.
-4. If relevant, include any headings or subheadings to structure your response.
-5. Ensure proper grammar, punctuation, and spelling throughout your answer.
+4. Ensure proper grammar, punctuation, and spelling throughout your answer.
 
 Important: Base your entire response solely on the information provided in the context. Do not include any external knowledge or assumptions not present in the given text.
 """
@@ -95,9 +94,12 @@ def initialize_faiss() -> FAISS:
         return FAISS.load_local(FAISS_INDEX_PATH, EMBEDDINGS, allow_dangerous_deserialization=True)
     return None
 
-def initialize_chromadb(distance_metric: str) -> PersistentClient:
-    embedding_function = EMBEDDINGS.embed_query
-    return PersistentClient(path="./chroma_data", embedding_function=embedding_function, metadata={"hnsw:space": distance_metric})
+def initialize_chromadb() -> chromadb.Client:
+    settings = Settings(
+        chroma_db_impl="duckdb+parquet",
+        persist_directory="./chroma_data"
+    )
+    return chromadb.Client(settings=settings)
 
 def add_to_vector_collection(all_splits: list[Document], vector_store, library: str):
     documents = [doc.page_content for doc in all_splits]
@@ -110,15 +112,17 @@ def add_to_vector_collection(all_splits: list[Document], vector_store, library: 
             vector_store.add_texts(documents, metadatas=metadatas)
         vector_store.save_local(FAISS_INDEX_PATH)
     elif library == "chromadb":
-        vector_store.add_texts(documents, metadatas=metadatas)
-    st.success("Data added to the vector store!")
+        collection = vector_store.get_or_create_collection(name="rag_app")
+        collection.add(documents=documents, metadatas=metadatas)
+    st.success("Data has been successfully added to the vector store!")
 
 def query_vector_store(prompt: str, vector_store, library: str, k: int = 10):
     if library == "faiss":
         results_docs = vector_store.similarity_search(prompt, k=k)
         return [doc.page_content for doc in results_docs]
     elif library == "chromadb":
-        results = vector_store.query(query_texts=[prompt], n_results=k)
+        collection = vector_store.get_or_create_collection(name="rag_app")
+        results = collection.query(query_texts=[prompt], n_results=k)
         return results.get("documents", [[]])[0]
 
 def call_llm(context: str, prompt: str):
@@ -132,15 +136,17 @@ def call_llm(context: str, prompt: str):
             },
             {
                 "role": "user",
-                "content": f"Context: {context}, Question: {prompt}",
+                "content": f"Context: {context}\n\nQuestion: {prompt}",
             },
         ],
     )
+    full_response = ""
     for chunk in response:
         if chunk["done"] is False:
-            yield chunk["message"]["content"]
+            full_response += chunk["message"]["content"]
         else:
             break
+    return full_response.strip()
 
 if __name__ == "__main__":
     st.set_page_config(page_title="RAG Question Answer")
@@ -149,12 +155,11 @@ if __name__ == "__main__":
         st.header("🗣️ RAG Question Answer")
         chunk_size = st.number_input("Set Chunk Size:", min_value=100, max_value=2000, value=400)
         chunk_overlap = int(chunk_size * 0.2)
-        distance_metric = st.selectbox("Distance Metric", ["cosine", "euclidean", "dot"])
         library = st.selectbox("Library", ["faiss", "chromadb"])
         uploaded_files = st.file_uploader("Upload PDF", type=["pdf"], accept_multiple_files=True)
         process = st.button("⚡ Process All")
 
-        vector_store = initialize_faiss() if library == "faiss" else initialize_chromadb(distance_metric)
+        vector_store = initialize_faiss() if library == "faiss" else initialize_chromadb()
 
         if process and uploaded_files:
             for file in uploaded_files:
@@ -171,6 +176,9 @@ if __name__ == "__main__":
             st.write("No documents available.")
         else:
             response = call_llm(context="\n".join(context), prompt=prompt)
-            for part in response:
-                st.write(part)
+            st.markdown(f"**Answer:**\n\n{response}")
+
+            with st.expander("See retrieved documents"):
+                st.write(context)
+
 
