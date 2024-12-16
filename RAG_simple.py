@@ -7,7 +7,6 @@ Created on Fri Dec 13 16:37:58 2024
 """
 import os
 import tempfile
-import requests
 import ollama
 import streamlit as st
 from langchain.document_loaders import PyMuPDFLoader
@@ -15,8 +14,8 @@ from langchain.schema import Document
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from streamlit.runtime.uploaded_file_manager import UploadedFile
 from sentence_transformers import CrossEncoder
-from langchain.embeddings.base import Embeddings
-from langchain.vectorstores import FAISS
+import chromadb
+from chromadb.utils.embedding_functions.ollama_embedding_function import OllamaEmbeddingFunction
 
 system_prompt = """
 You are an AI assistant tasked with providing detailed answers based solely on the given context. Your goal is to analyze the information provided and formulate a comprehensive, well-structured response to the question.
@@ -30,6 +29,9 @@ To answer the question:
 3. Formulate a detailed answer that directly addresses the question, using only the information provided in the context.
 4. Ensure your answer is comprehensive, covering all relevant aspects found in the context.
 5. If the context doesn't contain sufficient information to fully answer the question, state this clearly in your response.
+6. Ask clarification question if the question is too vague: for example if the question is "when are the office hours?" you can ask the user to specify which class is he or she talking about. 
+7. If the request is just a general question such as "hi!" or "how are you?" or a simple math calculation you should be able to do it
+8. Don't come up with fake names or fake information but if you are asked about something that is not specified in the documents such as "for what career is this class relevant?" you should mention that "even though it is not indicated in the syllabus " and then continue with a suggestion
 
 Format your response as follows:
 1. Use clear, concise language.
@@ -38,39 +40,10 @@ Format your response as follows:
 4. If relevant, include any headings or subheadings to structure your response.
 5. Ensure proper grammar, punctuation, and spelling throughout your answer.
 
-Important: Base your entire response solely on the information provided in the context. Do not include any external knowledge or assumptions not present in the given text.
+Important: Base your entire response solely on the information provided in the context. Do not include any external knowledge or assumptions not present in the given text (except for situations such as 7. adn 8.).
 """
 
-FAISS_INDEX_PATH = "./faiss_index"
 
-class OllamaEmbeddings(Embeddings):
-    def __init__(self, url: str, model_name: str):
-        self.url = url
-        self.model_name = model_name
-
-    def embed_documents(self, texts: list[str]) -> list[list[float]]:
-        return [self._get_embedding(t) for t in texts]
-
-    def embed_query(self, text: str) -> list[float]:
-        return self._get_embedding(text)
-
-    def _get_embedding(self, text: str) -> list[float]:
-        # Call Ollama embeddings endpoint
-        response = requests.post(
-            self.url,
-            json={"prompt": text, "model": self.model_name},
-            timeout=30
-        )
-        response.raise_for_status()
-        data = response.json()
-        if "embedding" not in data:
-            raise ValueError("Expected 'embedding' in response. Got: {}".format(data))
-        return data["embedding"]
-
-EMBEDDINGS = OllamaEmbeddings(
-    url="http://localhost:11434/api/embeddings",
-    model_name="nomic-embed-text:latest",
-)
 
 def process_document(uploaded_file: UploadedFile) -> list[Document]:
     temp_file = tempfile.NamedTemporaryFile("wb", suffix=".pdf", delete=False)
@@ -88,55 +61,43 @@ def process_document(uploaded_file: UploadedFile) -> list[Document]:
     )
     return text_splitter.split_documents(docs)
 
-def load_vectorstore() -> FAISS:
-    if os.path.exists(FAISS_INDEX_PATH):
-        # Only set allow_dangerous_deserialization=True if you trust the source of the FAISS index
-        return FAISS.load_local(FAISS_INDEX_PATH, EMBEDDINGS, allow_dangerous_deserialization=True)
-    return None
+def get_vector_collection() -> chromadb.Collection:
+    ollama_ef = OllamaEmbeddingFunction(
+        url="http://localhost:11434/api/embeddings",
+        model_name="nomic-embed-text:latest",
+    )
 
-def save_vectorstore(vectorstore: FAISS):
-    vectorstore.save_local(FAISS_INDEX_PATH)
+    chroma_client = chromadb.PersistentClient(path="./demo-rag-chroma")
+    return chroma_client.get_or_create_collection(
+        name="rag_app",
+        embedding_function=ollama_ef,
+        metadata={"hnsw:space": "cosine"},
+    )
 
 def add_to_vector_collection(all_splits: list[Document], file_name: str):
-    vectorstore = load_vectorstore()
 
-    documents = [doc.page_content for doc in all_splits]
-    metadatas = [doc.metadata if doc.metadata else {} for doc in all_splits]
-    ids = [f"{file_name}_{idx}" for idx in range(len(documents))]
+    collection = get_vector_collection()
+    documents, metadatas, ids = [], [], []
 
-    for i, mid in enumerate(ids):
-        metadatas[i]["id"] = mid
+    for idx, split in enumerate(all_splits):
+        documents.append(split.page_content)
+        metadatas.append(split.metadata)
+        ids.append(f"{file_name}_{idx}")
 
-    if vectorstore is None:
-        # Create a new FAISS vectorstore from these texts
-        vectorstore = FAISS.from_texts(documents, EMBEDDINGS, metadatas=metadatas)
-    else:
-        # Add texts to existing vectorstore
-        vectorstore.add_texts(documents, metadatas=metadatas)
-
-    save_vectorstore(vectorstore)
+    collection.upsert(
+        documents=documents,
+        metadatas=metadatas,
+        ids=ids,
+    )
     st.success("Data added to the vector store!")
 
 def query_collection(prompt: str, n_results: int = 10):
-    vectorstore = load_vectorstore()
-    if vectorstore is None:
-        # No documents have been added yet
-        return {"documents": [[]], "metadatas": [[]], "ids": [[]]}
 
-    results_docs = vectorstore.similarity_search(prompt, k=n_results)
-
-    documents = [doc.page_content for doc in results_docs]
-    metadatas = [doc.metadata for doc in results_docs]
-    ids = [m.get("id", f"doc_{i}") for i, m in enumerate(metadatas)]
-
-    # Mimic Chroma's return format
-    return {
-        "documents": [documents],
-        "metadatas": [metadatas],
-        "ids": [ids],
-    }
-
+    collection = get_vector_collection()
+    results = collection.query(query_texts=[prompt], n_results=n_results)
+    return results
 def call_llm(context: str, prompt: str):
+
     response = ollama.chat(
         model="llama3.2",
         stream=True,
@@ -157,27 +118,24 @@ def call_llm(context: str, prompt: str):
         else:
             break
 
-def re_rank_cross_encoders(documents: list[str], query: str) -> tuple[str, list[int]]:
+
+def re_rank_cross_encoders(documents: list[str]) -> tuple[str, list[int]]:
+
     relevant_text = ""
     relevant_text_ids = []
+
     encoder_model = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
-
-    pairs = [(query, doc) for doc in documents]
-    scores = encoder_model.predict(pairs)
-    ranked = sorted(enumerate(documents), key=lambda x: scores[x[0]], reverse=True)
-    top_3 = ranked[:3]
-
-    for idx, doc_text in top_3:
-        relevant_text += doc_text + "\n"
-        relevant_text_ids.append(idx)
+    ranks = encoder_model.rank(prompt, documents, top_k=3)
+    for rank in ranks:
+        relevant_text += documents[rank["corpus_id"]]
+        relevant_text_ids.append(rank["corpus_id"])
 
     return relevant_text, relevant_text_ids
 
-if __name__ == "__main__":
-    st.set_page_config(page_title="RAG Question Answer")
 
+if __name__ == "__main__":
     with st.sidebar:
-        st.header("🗣️ RAG Question Answer")
+        st.set_page_config(page_title="RAG Question Answer")
         uploaded_file = st.file_uploader(
             "**📑 Upload PDF files for QnA**", type=["pdf"], accept_multiple_files=False
         )
@@ -186,36 +144,28 @@ if __name__ == "__main__":
         if uploaded_file and process:
             normalize_uploaded_file_name = uploaded_file.name.translate(
                 str.maketrans({"-": "_", ".": "_", " ": "_"})
-            )
+                )
             all_splits = process_document(uploaded_file)
             add_to_vector_collection(all_splits, normalize_uploaded_file_name)
-
+    
     st.header("🗣️ RAG Question Answer")
-    user_prompt = st.text_area("**Ask a question related to your document:**")
-    ask = st.button("🔥 Ask")
+    prompt = st.text_area("**Ask a question related to your document:**")
+    ask = st.button(
+        "🔥 Ask",
+    )
+    
+    if ask and prompt:
+        results = query_collection(prompt)
+        context = results.get("documents")[0]
+        relevant_text, relevant_text_ids = re_rank_cross_encoders(context)
+        response = call_llm(context=relevant_text, prompt=prompt)
+        st.write_stream(response)
 
-    if ask and user_prompt:
-        results = query_collection(user_prompt)
-        context_docs = results.get("documents", [[]])[0]
+        with st.expander("See retrieved documents"):
+            st.write(results)
 
-        if not context_docs:
-            st.write("No documents available. Please upload and process a PDF first.")
-        else:
-            relevant_text, relevant_text_ids = re_rank_cross_encoders(context_docs, user_prompt)
-            response = call_llm(context=relevant_text, prompt=user_prompt)
-
-            # Accumulate the streamed response and display progressively
-            placeholder = st.empty()
-            full_response = ""
-            for r in response:
-                full_response += r
-                placeholder.markdown(full_response)
-
-            with st.expander("See retrieved documents"):
-                st.write(results)
-
-            with st.expander("See most relevant document ids"):
-                st.write(relevant_text_ids)
-                st.write(relevant_text)
-
+        with st.expander("See most relevant document ids"):
+            st.write(relevant_text_ids)
+            st.write(relevant_text)
+    
 
