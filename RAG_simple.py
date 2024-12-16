@@ -16,26 +16,28 @@ from streamlit.runtime.uploaded_file_manager import UploadedFile
 import chromadb
 from chromadb.utils.embedding_functions.ollama_embedding_function import OllamaEmbeddingFunction
 
-# Enhanced system prompt emphasizing full context usage and listing all courses and their instructors
+# Enhanced system prompt
 system_prompt = """
-You are an AI assistant tasked with providing detailed answers based solely on the provided context. 
-Your goal: Thoroughly read ALL of the provided documents. If the user asks about professors, instructors, or GSIs, 
-you must identify EVERY distinct course mentioned in the context and list all corresponding instructors or professors 
-for each of those courses. Do not skip any course mentioned in the text, even if it only appears briefly.
+To answer the question:
+1. Thoroughly analyze the context, identifying key information relevant to the question.
+2. Include all relevant history from previous user questions and responses (if applicable).
+3. Organize your response logically, ensuring all parts of the question are addressed.
+4. If the context doesn't contain sufficient information, state this clearly, or if relevant, add suggestions based on your knowledge.
 
 Guidelines:
-1. Use all provided documents as context. Do not ignore any relevant information, even if it appears multiple documents down.
-2. Identify all courses by name or code (e.g., IEOR 291, IEOR 263, IEOR 241, Risk, Simulation and Data Analysis).
-3. For each course mentioned in the documents, list the instructor(s), professor(s), and/or GSIs if provided.
-4. If a particular course mentions no professor, state clearly that no professor or instructor is mentioned for that course.
-5. Never invent or assume information not present in the documents.
-6. If the context does not contain enough information to answer fully, say so.
+1. For unrelated or vague questions, respond appropriately without referencing documents.
+2. If the question relates to a career or general topic (not in the documents), provide thoughtful suggestions, but clearly mention this is not sourced from the documents.
 
 Format:
-- Use clear, concise paragraphs.
-- If listing multiple courses, present them in a structured format (e.g., bullet points or a heading for each course).
-- Ensure proper grammar and readability.
+1. Use bullet points, numbered lists, or headings for readability.
+2. Ensure responses are structured and concise.
+
+Important: Base your answers solely on the provided context and history, unless instructed otherwise.
 """
+
+# Initialize search history
+if "history" not in st.session_state:
+    st.session_state.history = []
 
 def process_document(uploaded_file: UploadedFile) -> list[Document]:
     temp_file = tempfile.NamedTemporaryFile("wb", suffix=".pdf", delete=False)
@@ -87,7 +89,13 @@ def query_collection(prompt: str, n_results: int = 10):
     results = collection.query(query_texts=[prompt], n_results=n_results)
     return results
 
-def call_llm(context: str, prompt: str):
+def call_llm(context: str, prompt: str, history: list[dict]):
+    # Include history in the prompt
+    history_text = "\n\n".join(
+        [f"Q: {entry['question']}\nA: {entry['answer']}" for entry in history]
+    )
+    full_context = f"{history_text}\n\n{context}"
+    
     response = ollama.chat(
         model="llama3.2",
         stream=True,
@@ -98,7 +106,7 @@ def call_llm(context: str, prompt: str):
             },
             {
                 "role": "user",
-                "content": f"Context: {context}\n\nQuestion: {prompt}",
+                "content": f"Context: {full_context}\n\nQuestion: {prompt}",
             },
         ],
     )
@@ -142,14 +150,23 @@ if __name__ == "__main__":
             # Concatenate all retrieved documents into a single context
             concatenated_context = "\n\n".join(context_docs)
 
-            # Pass concatenated context to LLM
-            response = call_llm(context=concatenated_context, prompt=user_prompt)
-
+            # Include search history in the call to LLM
             placeholder = st.empty()
             full_response = ""
-            for r in response:
+            response_stream = call_llm(
+                context=concatenated_context, prompt=user_prompt, history=st.session_state.history
+            )
+            for r in response_stream:
                 full_response += r
                 placeholder.markdown(full_response)
+
+            # Update search history
+            st.session_state.history.append({"question": user_prompt, "answer": full_response})
+
+            # Display search history
+            with st.expander("Search History"):
+                for entry in st.session_state.history:
+                    st.write(f"**Q:** {entry['question']}\n**A:** {entry['answer']}\n---")
 
             with st.expander("See retrieved documents"):
                 st.write(results)
@@ -157,4 +174,3 @@ if __name__ == "__main__":
             with st.expander("See most relevant document IDs"):
                 st.write(results.get("ids", [[]])[0])
                 st.write(concatenated_context)
-
