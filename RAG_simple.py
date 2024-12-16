@@ -23,11 +23,10 @@ To answer the question:
 2. Include all relevant history from previous user questions and responses (if applicable).
 3. Organize your response logically, ensuring all parts of the question are addressed.
 4. If the context doesn't contain sufficient information, state this clearly, or if relevant, add suggestions based on your knowledge.
-
 Guidelines:
 1. For unrelated or vague questions, respond appropriately without referencing documents.
 2. If the question relates to a career or general topic (not in the documents), provide thoughtful suggestions, but clearly mention this is not sourced from the documents.
-
+3. If the user asks you about a previous question asked, look at it in your "history," re-state it, and answer it.
 Format:
 1. Use bullet points, numbered lists, or headings for readability.
 2. Ensure responses are structured and concise.
@@ -39,7 +38,7 @@ Important: Base your answers solely on the provided context and history, unless 
 if "history" not in st.session_state:
     st.session_state.history = []
 
-def process_document(uploaded_file: UploadedFile) -> list[Document]:
+def process_document(uploaded_file: UploadedFile, chunk_size: int, chunk_overlap: int) -> list[Document]:
     temp_file = tempfile.NamedTemporaryFile("wb", suffix=".pdf", delete=False)
     temp_file.write(uploaded_file.read())
     temp_file.flush()
@@ -49,8 +48,8 @@ def process_document(uploaded_file: UploadedFile) -> list[Document]:
     os.unlink(temp_file.name)
 
     text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=400,
-        chunk_overlap=100,
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
         separators=["\n\n", "\n", ".", "?", "!", " ", ""],
     )
     return text_splitter.split_documents(docs)
@@ -121,6 +120,12 @@ if __name__ == "__main__":
 
     with st.sidebar:
         st.header("🗣️ RAG Question Answer")
+        # Input for dynamic chunk size
+        chunk_size = st.number_input(
+            "**Set Chunk Size (characters):**", min_value=100, max_value=2000, value=400, step=100
+        )
+        chunk_overlap = int(chunk_size * 0.2)  # 20% of chunk size
+
         uploaded_files = st.file_uploader(
             "**📑 Upload PDF files for QnA**",
             type=["pdf"],
@@ -133,7 +138,7 @@ if __name__ == "__main__":
                 file_name = uploaded_file.name.translate(
                     str.maketrans({"-": "_", ".": "_", " ": "_"})
                 )
-                all_splits = process_document(uploaded_file)
+                all_splits = process_document(uploaded_file, chunk_size, chunk_overlap)
                 add_to_vector_collection(all_splits, file_name)
     
     st.header("🗣️ RAG Question Answer")
@@ -174,3 +179,4 @@ if __name__ == "__main__":
             with st.expander("See most relevant document IDs"):
                 st.write(results.get("ids", [[]])[0])
                 st.write(concatenated_context)
+
