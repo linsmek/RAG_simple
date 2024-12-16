@@ -10,60 +10,63 @@ import tempfile
 import requests
 import ollama
 import streamlit as st
+from typing import Any
 from langchain.document_loaders import PyMuPDFLoader
 from langchain.schema import Document
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from streamlit.runtime.uploaded_file_manager import UploadedFile
-from sentence_transformers import CrossEncoder
 from langchain.embeddings.base import Embeddings
 from langchain.vectorstores import FAISS
-import chromadb
-import numpy as np
+from chromadb import PersistentClient
+from chromadb.utils.embedding_functions import EmbeddingFunction
 
-# Constants
-FAISS_INDEX_PATH = "./faiss_index"
-CHROMADB_PATH = "./chroma_store"
-
-# System Prompt
+# Enhanced system prompt
 system_prompt = """
+You are an AI assistant tasked with providing detailed answers based solely on the given context. Your goal is to analyze the information provided and formulate a comprehensive, well-structured response to the question.
+
+context will be passed as "Context:"
+user question will be passed as "Question:"
+
 To answer the question:
 1. Thoroughly analyze the context, identifying key information relevant to the question.
-2. Include all relevant history from previous user questions and responses (if applicable).
-3. Organize your response logically, ensuring all parts of the question are addressed.
-4. If the context doesn't contain sufficient information, state this clearly, or if relevant, add suggestions based on your knowledge.
-Guidelines:
-1. For unrelated or vague questions, respond appropriately without referencing documents.
-2. If the question relates to a career or general topic (not in the documents), provide thoughtful suggestions, but clearly mention this is not sourced from the documents.
-3. If the user asks you about a previous question asked, look at it in your "history," re-state it, and answer it.
-Format:
-1. Use bullet points, numbered lists, or headings for readability.
-2. Ensure responses are structured and concise.
+2. Organize your thoughts and plan your response to ensure a logical flow of information.
+3. Formulate a detailed answer that directly addresses the question, using only the information provided in the context.
+4. Ensure your answer is comprehensive, covering all relevant aspects found in the context.
+5. If the context doesn't contain sufficient information to fully answer the question, state this clearly in your response.
 
-Important: Base your answers solely on the provided context and history, unless instructed otherwise.
+Format your response as follows:
+1. Use clear, concise language.
+2. Organize your answer into paragraphs for readability.
+3. Use bullet points or numbered lists where appropriate to break down complex information.
+4. If relevant, include any headings or subheadings to structure your response.
+5. Ensure proper grammar, punctuation, and spelling throughout your answer.
+
+Important: Base your entire response solely on the information provided in the context. Do not include any external knowledge or assumptions not present in the given text.
 """
 
-# Embedding Function
-class OllamaEmbeddings:
+FAISS_INDEX_PATH = "./faiss_index"
+
+# Custom embedding function for Ollama
+class OllamaEmbeddings(Embeddings):
     def __init__(self, url: str, model_name: str):
         self.url = url
         self.model_name = model_name
 
-    def __call__(self, texts: list[str]) -> list[list[float]]:
-        embeddings = []
-        for text in texts:
-            embeddings.append(self._get_embedding(text))
-        return embeddings
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return [self._get_embedding(t) for t in texts]
+
+    def embed_query(self, text: str) -> list[float]:
+        return self._get_embedding(text)
 
     def _get_embedding(self, text: str) -> list[float]:
         response = requests.post(
             self.url,
             json={"prompt": text, "model": self.model_name},
-            timeout=30,
+            timeout=30
         )
         response.raise_for_status()
         data = response.json()
         if "embedding" not in data:
-            raise ValueError(f"Expected 'embedding' in response. Got: {data}")
+            raise ValueError("Expected 'embedding' in response. Got: {}".format(data))
         return data["embedding"]
 
 EMBEDDINGS = OllamaEmbeddings(
@@ -71,8 +74,7 @@ EMBEDDINGS = OllamaEmbeddings(
     model_name="nomic-embed-text:latest",
 )
 
-# Document Processing
-def process_document(uploaded_file: UploadedFile, chunk_size: int, chunk_overlap: int) -> list[Document]:
+def process_document(uploaded_file: Any, chunk_size: int, chunk_overlap: int) -> list[Document]:
     temp_file = tempfile.NamedTemporaryFile("wb", suffix=".pdf", delete=False)
     temp_file.write(uploaded_file.read())
     temp_file.flush()
@@ -88,87 +90,50 @@ def process_document(uploaded_file: UploadedFile, chunk_size: int, chunk_overlap
     )
     return text_splitter.split_documents(docs)
 
-# Initialize Vector Store
-def initialize_vector_store(library: str, distance_metric: str, documents=None):
-    if library == "FAISS":
-        if os.path.exists(FAISS_INDEX_PATH):
-            return FAISS.load_local(FAISS_INDEX_PATH, EMBEDDINGS, allow_dangerous_deserialization=True)
-        elif documents and len(documents) > 0:
-            return FAISS.from_texts(documents, EMBEDDINGS)
-        else:
-            raise ValueError("FAISS requires at least one document to initialize.")
-    elif library == "ChromaDB":
-        chroma_client = chromadb.PersistentClient(path=CHROMADB_PATH)
-        return chroma_client.get_or_create_collection(
-            name="rag_app",
-            embedding_function=OllamaEmbeddings(
-                url="http://localhost:11434/api/embeddings",
-                model_name="nomic-embed-text:latest",
-            ),
-            metadata={"hnsw:space": distance_metric},
-        )
-    else:
-        raise ValueError(f"Unsupported library: {library}")
+def initialize_faiss() -> FAISS:
+    if os.path.exists(FAISS_INDEX_PATH):
+        return FAISS.load_local(FAISS_INDEX_PATH, EMBEDDINGS, allow_dangerous_deserialization=True)
+    return None
 
-# Add to Vector Store
+def initialize_chromadb(distance_metric: str) -> PersistentClient:
+    embedding_function = EMBEDDINGS.embed_query
+    return PersistentClient(path="./chroma_data", embedding_function=embedding_function, metadata={"hnsw:space": distance_metric})
+
 def add_to_vector_collection(all_splits: list[Document], vector_store, library: str):
     documents = [doc.page_content for doc in all_splits]
-    metadatas = [doc.metadata if doc.metadata else {} for doc in all_splits]
+    metadatas = [doc.metadata or {} for doc in all_splits]
 
-    # Ensure embeddings are valid
-    embeddings = []
-    for doc in documents:
-        try:
-            embedding = EMBEDDINGS([doc])
-            if embedding and isinstance(embedding[0], list):
-                embeddings.append(embedding[0])
-            else:
-                raise ValueError(f"Invalid embedding for document: {doc}")
-        except Exception as e:
-            st.error(f"Error generating embedding for a document: {str(e)}")
-            continue
-
-    if not embeddings:
-        st.error("No valid embeddings were generated. Please check your embedding function.")
-        return
-
-    if library == "FAISS":
-        if isinstance(vector_store, FAISS):
-            vector_store.add_texts(documents, metadatas=metadatas)
-        else:
+    if library == "faiss":
+        if not vector_store:
             vector_store = FAISS.from_texts(documents, EMBEDDINGS, metadatas=metadatas)
+        else:
+            vector_store.add_texts(documents, metadatas=metadatas)
         vector_store.save_local(FAISS_INDEX_PATH)
-    elif library == "ChromaDB":
-        vector_store.upsert(
-            documents=documents,
-            embeddings=embeddings,
-            metadatas=metadatas,
-            ids=[f"doc_{i}" for i in range(len(documents))]
-        )
-    else:
-        raise ValueError(f"Unsupported library: {library}")
+    elif library == "chromadb":
+        vector_store.add_texts(documents, metadatas=metadatas)
+    st.success("Data added to the vector store!")
 
-    st.success(f"Data has been stored in the {library} vector store!")
+def query_vector_store(prompt: str, vector_store, library: str, k: int = 10):
+    if library == "faiss":
+        results_docs = vector_store.similarity_search(prompt, k=k)
+        return [doc.page_content for doc in results_docs]
+    elif library == "chromadb":
+        results = vector_store.query(query_texts=[prompt], n_results=k)
+        return results.get("documents", [[]])[0]
 
-# Query Vector Store
-def query_collection(prompt: str, vector_store, library: str, n_results: int = 10):
-    if library == "FAISS":
-        results = vector_store.similarity_search(prompt, k=n_results)
-        return [doc.page_content for doc in results]
-    elif library == "ChromaDB":
-        results = vector_store.query(query_texts=[prompt], n_results=n_results)
-        return results["documents"][0]
-    else:
-        raise ValueError(f"Unsupported library: {library}")
-
-# Call LLM
 def call_llm(context: str, prompt: str):
     response = ollama.chat(
         model="llama3.2",
         stream=True,
         messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Context: {context}, Question: {prompt}"},
+            {
+                "role": "system",
+                "content": system_prompt,
+            },
+            {
+                "role": "user",
+                "content": f"Context: {context}, Question: {prompt}",
+            },
         ],
     )
     for chunk in response:
@@ -177,46 +142,35 @@ def call_llm(context: str, prompt: str):
         else:
             break
 
-# Main Application
 if __name__ == "__main__":
     st.set_page_config(page_title="RAG Question Answer")
 
     with st.sidebar:
         st.header("🗣️ RAG Question Answer")
-        library = st.selectbox("Select Vector Store:", ["FAISS", "ChromaDB"], index=0)
-
-        distance_metric = st.selectbox(
-            "Choose Distance Metric:",
-            options=["cosine", "euclidean", "dot"],
-            index=0
-        )
-
-        chunk_size = st.number_input("Chunk Size:", min_value=100, max_value=2000, value=400, step=100)
+        chunk_size = st.number_input("Set Chunk Size:", min_value=100, max_value=2000, value=400)
         chunk_overlap = int(chunk_size * 0.2)
+        distance_metric = st.selectbox("Distance Metric", ["cosine", "euclidean", "dot"])
+        library = st.selectbox("Library", ["faiss", "chromadb"])
+        uploaded_files = st.file_uploader("Upload PDF", type=["pdf"], accept_multiple_files=True)
+        process = st.button("⚡ Process All")
 
-        uploaded_files = st.file_uploader("Upload PDFs:", type=["pdf"], accept_multiple_files=True)
-        process = st.button("Process Documents")
+        vector_store = initialize_faiss() if library == "faiss" else initialize_chromadb(distance_metric)
 
-        if uploaded_files and process:
-            documents = []
-            for uploaded_file in uploaded_files:
-                all_splits = process_document(uploaded_file, chunk_size, chunk_overlap)
-                documents.extend([doc.page_content for doc in all_splits])
-            vector_store = initialize_vector_store(library, distance_metric, documents=documents)
-            add_to_vector_collection(all_splits, vector_store, library)
+        if process and uploaded_files:
+            for file in uploaded_files:
+                splits = process_document(file, chunk_size, chunk_overlap)
+                add_to_vector_collection(splits, vector_store, library)
 
-    st.header("🗣️ Ask a Question")
-    user_prompt = st.text_area("Your Question:")
+    st.header("🗣️ RAG Question Answer")
+    prompt = st.text_area("Ask a Question")
     ask = st.button("Ask")
 
-    if ask and user_prompt:
-        vector_store = initialize_vector_store(library, distance_metric)
-        results = query_collection(user_prompt, vector_store, library)
-        context = "\n\n".join(results)
+    if ask and prompt:
+        context = query_vector_store(prompt, vector_store, library)
+        if not context:
+            st.write("No documents available.")
+        else:
+            response = call_llm(context="\n".join(context), prompt=prompt)
+            for part in response:
+                st.write(part)
 
-        response = call_llm(context, user_prompt)
-        placeholder = st.empty()
-        full_response = ""
-        for r in response:
-            full_response += r
-            placeholder.markdown(full_response)
