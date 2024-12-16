@@ -18,6 +18,7 @@ from sentence_transformers import CrossEncoder
 from langchain.embeddings.base import Embeddings
 from langchain.vectorstores import FAISS
 import chromadb
+import numpy as np
 
 # Constants
 FAISS_INDEX_PATH = "./faiss_index"
@@ -114,17 +115,39 @@ def add_to_vector_collection(all_splits: list[Document], vector_store, library: 
     documents = [doc.page_content for doc in all_splits]
     metadatas = [doc.metadata if doc.metadata else {} for doc in all_splits]
 
+    # Ensure embeddings are valid
+    embeddings = []
+    for doc in documents:
+        try:
+            embedding = EMBEDDINGS([doc])
+            if embedding and isinstance(embedding[0], list):
+                embeddings.append(embedding[0])
+            else:
+                raise ValueError(f"Invalid embedding for document: {doc}")
+        except Exception as e:
+            st.error(f"Error generating embedding for a document: {str(e)}")
+            continue
+
+    if not embeddings:
+        st.error("No valid embeddings were generated. Please check your embedding function.")
+        return
+
     if library == "FAISS":
-        vector_store.add_texts(documents, metadatas=metadatas)
+        if isinstance(vector_store, FAISS):
+            vector_store.add_texts(documents, metadatas=metadatas)
+        else:
+            vector_store = FAISS.from_texts(documents, EMBEDDINGS, metadatas=metadatas)
         vector_store.save_local(FAISS_INDEX_PATH)
     elif library == "ChromaDB":
         vector_store.upsert(
             documents=documents,
+            embeddings=embeddings,
             metadatas=metadatas,
             ids=[f"doc_{i}" for i in range(len(documents))]
         )
     else:
         raise ValueError(f"Unsupported library: {library}")
+
     st.success(f"Data has been stored in the {library} vector store!")
 
 # Query Vector Store
@@ -197,4 +220,3 @@ if __name__ == "__main__":
         for r in response:
             full_response += r
             placeholder.markdown(full_response)
-
