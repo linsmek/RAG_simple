@@ -90,7 +90,8 @@ def process_document(uploaded_file: UploadedFile) -> list[Document]:
 
 def load_vectorstore() -> FAISS:
     if os.path.exists(FAISS_INDEX_PATH):
-        return FAISS.load_local(FAISS_INDEX_PATH, EMBEDDINGS)
+        # Only set allow_dangerous_deserialization=True if you trust the source of the FAISS index
+        return FAISS.load_local(FAISS_INDEX_PATH, EMBEDDINGS, allow_dangerous_deserialization=True)
     return None
 
 def save_vectorstore(vectorstore: FAISS):
@@ -161,10 +162,8 @@ def re_rank_cross_encoders(documents: list[str], query: str) -> tuple[str, list[
     relevant_text_ids = []
     encoder_model = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
 
-    # Compute scores for each document
     pairs = [(query, doc) for doc in documents]
     scores = encoder_model.predict(pairs)
-    # Sort documents by score (descending)
     ranked = sorted(enumerate(documents), key=lambda x: scores[x[0]], reverse=True)
     top_3 = ranked[:3]
 
@@ -205,7 +204,6 @@ if __name__ == "__main__":
             relevant_text, relevant_text_ids = re_rank_cross_encoders(context_docs, user_prompt)
             response = call_llm(context=relevant_text, prompt=user_prompt)
 
-            # Stream response chunks
             for r in response:
                 st.write(r)
 
@@ -215,4 +213,5 @@ if __name__ == "__main__":
             with st.expander("See most relevant document ids"):
                 st.write(relevant_text_ids)
                 st.write(relevant_text)
+
 
