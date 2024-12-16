@@ -42,22 +42,22 @@ Important: Base your answers solely on the provided context and history, unless 
 """
 
 # Embedding Function
-class OllamaEmbeddings(Embeddings):
+class OllamaEmbeddings:
     def __init__(self, url: str, model_name: str):
         self.url = url
         self.model_name = model_name
 
-    def embed_documents(self, texts: list[str]) -> list[list[float]]:
-        return [self._get_embedding(t) for t in texts]
-
-    def embed_query(self, text: str) -> list[float]:
-        return self._get_embedding(text)
+    def __call__(self, texts: list[str]) -> list[list[float]]:
+        embeddings = []
+        for text in texts:
+            embeddings.append(self._get_embedding(text))
+        return embeddings
 
     def _get_embedding(self, text: str) -> list[float]:
         response = requests.post(
             self.url,
             json={"prompt": text, "model": self.model_name},
-            timeout=30
+            timeout=30,
         )
         response.raise_for_status()
         data = response.json()
@@ -93,7 +93,6 @@ def initialize_vector_store(library: str, distance_metric: str, documents=None):
         if os.path.exists(FAISS_INDEX_PATH):
             return FAISS.load_local(FAISS_INDEX_PATH, EMBEDDINGS, allow_dangerous_deserialization=True)
         elif documents and len(documents) > 0:
-            # Initialize FAISS with provided documents
             return FAISS.from_texts(documents, EMBEDDINGS)
         else:
             raise ValueError("FAISS requires at least one document to initialize.")
@@ -101,7 +100,10 @@ def initialize_vector_store(library: str, distance_metric: str, documents=None):
         chroma_client = chromadb.PersistentClient(path=CHROMADB_PATH)
         return chroma_client.get_or_create_collection(
             name="rag_app",
-            embedding_function=EMBEDDINGS,
+            embedding_function=OllamaEmbeddings(
+                url="http://localhost:11434/api/embeddings",
+                model_name="nomic-embed-text:latest",
+            ),
             metadata={"hnsw:space": distance_metric},
         )
     else:
@@ -129,11 +131,10 @@ def add_to_vector_collection(all_splits: list[Document], vector_store, library: 
 def query_collection(prompt: str, vector_store, library: str, n_results: int = 10):
     if library == "FAISS":
         results = vector_store.similarity_search(prompt, k=n_results)
-        documents = [doc.page_content for doc in results]
-        return documents
+        return [doc.page_content for doc in results]
     elif library == "ChromaDB":
         results = vector_store.query(query_texts=[prompt], n_results=n_results)
-        return results["documents"]
+        return results["documents"][0]
     else:
         raise ValueError(f"Unsupported library: {library}")
 
@@ -161,7 +162,6 @@ if __name__ == "__main__":
         st.header("🗣️ RAG Question Answer")
         library = st.selectbox("Select Vector Store:", ["FAISS", "ChromaDB"], index=0)
 
-        # Choose Distance Metric
         distance_metric = st.selectbox(
             "Choose Distance Metric:",
             options=["cosine", "euclidean", "dot"],
