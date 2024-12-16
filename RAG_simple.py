@@ -88,7 +88,7 @@ def process_document(uploaded_file: UploadedFile, chunk_size: int, chunk_overlap
     return text_splitter.split_documents(docs)
 
 # Initialize Vector Store
-def initialize_vector_store(library: str):
+def initialize_vector_store(library: str, distance_metric: str):
     if library == "FAISS":
         if os.path.exists(FAISS_INDEX_PATH):
             return FAISS.load_local(FAISS_INDEX_PATH, EMBEDDINGS, allow_dangerous_deserialization=True)
@@ -98,7 +98,7 @@ def initialize_vector_store(library: str):
         return chroma_client.get_or_create_collection(
             name="rag_app",
             embedding_function=EMBEDDINGS,
-            metadata={"hnsw:space": "cosine"},  # Update for dynamic space, if needed
+            metadata={"hnsw:space": distance_metric},
         )
     else:
         raise ValueError(f"Unsupported library: {library}")
@@ -119,6 +119,7 @@ def add_to_vector_collection(all_splits: list[Document], vector_store, library: 
         )
     else:
         raise ValueError(f"Unsupported library: {library}")
+    st.success(f"Data has been stored in the {library} vector store!")
 
 # Query Vector Store
 def query_collection(prompt: str, vector_store, library: str, n_results: int = 10):
@@ -156,6 +157,13 @@ if __name__ == "__main__":
         st.header("🗣️ RAG Question Answer")
         library = st.selectbox("Select Vector Store:", ["FAISS", "ChromaDB"], index=0)
 
+        # Choose Distance Metric
+        distance_metric = st.selectbox(
+            "Choose Distance Metric:",
+            options=["cosine", "euclidean", "dot"],
+            index=0
+        )
+
         chunk_size = st.number_input("Chunk Size:", min_value=100, max_value=2000, value=400, step=100)
         chunk_overlap = int(chunk_size * 0.2)
 
@@ -163,7 +171,7 @@ if __name__ == "__main__":
         process = st.button("Process Documents")
 
         if uploaded_files and process:
-            vector_store = initialize_vector_store(library)
+            vector_store = initialize_vector_store(library, distance_metric)
             for uploaded_file in uploaded_files:
                 all_splits = process_document(uploaded_file, chunk_size, chunk_overlap)
                 add_to_vector_collection(all_splits, vector_store, library)
@@ -173,7 +181,7 @@ if __name__ == "__main__":
     ask = st.button("Ask")
 
     if ask and user_prompt:
-        vector_store = initialize_vector_store(library)
+        vector_store = initialize_vector_store(library, distance_metric)
         results = query_collection(user_prompt, vector_store, library)
         context = "\n\n".join(results)
 
