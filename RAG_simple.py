@@ -37,14 +37,14 @@ Format your response as follows:
 1. Use clear, concise language.
 2. Organize your answer into paragraphs for readability.
 3. Use bullet points or numbered lists where appropriate to break down complex information.
-4. Ensure proper grammar, punctuation, and spelling throughout your answer.
+4. If relevant, include any headings or subheadings to structure your response.
+5. Ensure proper grammar, punctuation, and spelling throughout your answer.
 
 Important: Base your entire response solely on the information provided in the context. Do not include any external knowledge or assumptions not present in the given text.
 """
 
 FAISS_INDEX_PATH = "./faiss_index"
 
-# Custom embedding function for Ollama
 class OllamaEmbeddings(Embeddings):
     def __init__(self, url: str, model_name: str):
         self.url = url
@@ -95,9 +95,10 @@ def initialize_faiss() -> FAISS:
     return None
 
 def initialize_chromadb() -> chromadb.Client:
+    # Updated ChromaDB initialization
     settings = Settings(
-        chroma_db_impl="duckdb+parquet",
-        persist_directory="./chroma_data"
+        persist_directory="./chroma_data",
+        chroma_api_impl="local",
     )
     return chromadb.Client(settings=settings)
 
@@ -140,24 +141,18 @@ def call_llm(context: str, prompt: str):
             },
         ],
     )
-    full_response = ""
-    for chunk in response:
-        if chunk["done"] is False:
-            full_response += chunk["message"]["content"]
-        else:
-            break
-    return full_response.strip()
+    return "".join(chunk["message"]["content"] for chunk in response if not chunk["done"])
 
 if __name__ == "__main__":
     st.set_page_config(page_title="RAG Question Answer")
 
     with st.sidebar:
-        st.header("🗣️ RAG Question Answer")
-        chunk_size = st.number_input("Set Chunk Size:", min_value=100, max_value=2000, value=400)
+        st.header("RAG Question Answer")
+        chunk_size = st.number_input("Set Chunk Size", min_value=100, max_value=2000, value=400)
         chunk_overlap = int(chunk_size * 0.2)
         library = st.selectbox("Library", ["faiss", "chromadb"])
-        uploaded_files = st.file_uploader("Upload PDF", type=["pdf"], accept_multiple_files=True)
-        process = st.button("⚡ Process All")
+        uploaded_files = st.file_uploader("Upload PDFs", type=["pdf"], accept_multiple_files=True)
+        process = st.button("Process All")
 
         vector_store = initialize_faiss() if library == "faiss" else initialize_chromadb()
 
@@ -166,9 +161,9 @@ if __name__ == "__main__":
                 splits = process_document(file, chunk_size, chunk_overlap)
                 add_to_vector_collection(splits, vector_store, library)
 
-    st.header("🗣️ RAG Question Answer")
-    prompt = st.text_area("Ask a Question")
-    ask = st.button("Ask")
+    st.header("Ask a Question")
+    prompt = st.text_area("Your Question:")
+    ask = st.button("Submit")
 
     if ask and prompt:
         context = query_vector_store(prompt, vector_store, library)
@@ -176,9 +171,5 @@ if __name__ == "__main__":
             st.write("No documents available.")
         else:
             response = call_llm(context="\n".join(context), prompt=prompt)
-            st.markdown(f"**Answer:**\n\n{response}")
-
-            with st.expander("See retrieved documents"):
-                st.write(context)
-
+            st.write(response)
 
