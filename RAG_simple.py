@@ -16,21 +16,25 @@ from streamlit.runtime.uploaded_file_manager import UploadedFile
 import chromadb
 from chromadb.utils.embedding_functions.ollama_embedding_function import OllamaEmbeddingFunction
 
-# Enhanced prompt
+# Enhanced system prompt emphasizing full context usage and listing all courses and their instructors
 system_prompt = """
-You are an AI assistant tasked with providing detailed answers based solely on the provided context. Your goal is to analyze all the documents and formulate a well-structured, comprehensive response to the question.
+You are an AI assistant tasked with providing detailed answers based solely on the provided context. 
+Your goal: Thoroughly read ALL of the provided documents. If the user asks about professors, instructors, or GSIs, 
+you must identify EVERY distinct course mentioned in the context and list all corresponding instructors or professors 
+for each of those courses. Do not skip any course mentioned in the text, even if it only appears briefly.
 
-Important guidelines:
-1. Use all the provided context from multiple documents.
-2. Consolidate information across documents for questions requiring comparisons or listings (e.g., "Who are the professors for each class?").
-3. If the context is insufficient to fully answer the question, state this clearly.
-4. Avoid fabricating details or making assumptions. Base your response solely on the provided context.
-5. Organize your answer logically using bullet points, headings, or paragraphs for readability.
+Guidelines:
+1. Use all provided documents as context. Do not ignore any relevant information, even if it appears multiple documents down.
+2. Identify all courses by name or code (e.g., IEOR 291, IEOR 263, IEOR 241, Risk, Simulation and Data Analysis).
+3. For each course mentioned in the documents, list the instructor(s), professor(s), and/or GSIs if provided.
+4. If a particular course mentions no professor, state clearly that no professor or instructor is mentioned for that course.
+5. Never invent or assume information not present in the documents.
+6. If the context does not contain enough information to answer fully, say so.
 
 Format:
-1. Use concise, clear language.
-2. For questions requiring lists or comparisons, provide a structured response for each item (e.g., by class, by topic).
-3. If you encounter vague or unclear questions, ask clarifying questions.
+- Use clear, concise paragraphs.
+- If listing multiple courses, present them in a structured format (e.g., bullet points or a heading for each course).
+- Ensure proper grammar and readability.
 """
 
 def process_document(uploaded_file: UploadedFile) -> list[Document]:
@@ -104,7 +108,6 @@ def call_llm(context: str, prompt: str):
         else:
             break
 
-
 if __name__ == "__main__":
     st.set_page_config(page_title="RAG Question Answer")
 
@@ -154,3 +157,4 @@ if __name__ == "__main__":
             with st.expander("See most relevant document IDs"):
                 st.write(results.get("ids", [[]])[0])
                 st.write(concatenated_context)
+
