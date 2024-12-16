@@ -13,30 +13,24 @@ from langchain.document_loaders import PyMuPDFLoader
 from langchain.schema import Document
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from streamlit.runtime.uploaded_file_manager import UploadedFile
-from sentence_transformers import CrossEncoder
 import chromadb
 from chromadb.utils.embedding_functions.ollama_embedding_function import OllamaEmbeddingFunction
 
+# Enhanced prompt
 system_prompt = """
-You are an AI assistant tasked with providing detailed answers based solely on the given context. Your goal is to analyze the information provided and formulate a comprehensive, well-structured response to the question.
+You are an AI assistant tasked with providing detailed answers based solely on the provided context. Your goal is to analyze all the documents and formulate a well-structured, comprehensive response to the question.
 
-context will be passed as "Context:"
-user question will be passed as "Question:"
+Important guidelines:
+1. Use all the provided context from multiple documents.
+2. Consolidate information across documents for questions requiring comparisons or listings (e.g., "Who are the professors for each class?").
+3. If the context is insufficient to fully answer the question, state this clearly.
+4. Avoid fabricating details or making assumptions. Base your response solely on the provided context.
+5. Organize your answer logically using bullet points, headings, or paragraphs for readability.
 
-To answer the question:
-1. Thoroughly analyze the context, identifying key information relevant to the question.
-2. Include all relevant information from multiple documents, especially for questions that require comprehensive or consolidated answers.
-3. Organize your response logically and ensure it covers all aspects of the question.
-4. If the context is insufficient to fully answer the question, state this clearly in your response.
-
-Format your response as follows:
-1. Use clear, concise language.
-2. Organize your answer into paragraphs for readability.
-3. Use bullet points or numbered lists where appropriate.
-4. Use headings or subheadings if relevant.
-5. Ensure proper grammar, punctuation, and spelling throughout your response.
-
-Important: Base your entire response solely on the information provided in the context. Do not include any external knowledge or assumptions not present in the given text.
+Format:
+1. Use concise, clear language.
+2. For questions requiring lists or comparisons, provide a structured response for each item (e.g., by class, by topic).
+3. If you encounter vague or unclear questions, ask clarifying questions.
 """
 
 def process_document(uploaded_file: UploadedFile) -> list[Document]:
@@ -100,7 +94,7 @@ def call_llm(context: str, prompt: str):
             },
             {
                 "role": "user",
-                "content": f"Context: {context}, Question: {prompt}",
+                "content": f"Context: {context}\n\nQuestion: {prompt}",
             },
         ],
     )
@@ -110,25 +104,6 @@ def call_llm(context: str, prompt: str):
         else:
             break
 
-def consolidate_context(documents: list[str]) -> str:
-    """Concatenate all document texts into a single context."""
-    return "\n\n".join(documents)
-
-def re_rank_cross_encoders(documents: list[str], query: str) -> tuple[str, list[int]]:
-    relevant_text = ""
-    relevant_text_ids = []
-
-    encoder_model = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
-    pairs = [(query, doc) for doc in documents]
-    scores = encoder_model.predict(pairs)
-    ranked = sorted(enumerate(documents), key=lambda x: scores[x[0]], reverse=True)
-    top_3 = ranked[:3]
-
-    for idx, doc_text in top_3:
-        relevant_text += doc_text + "\n"
-        relevant_text_ids.append(idx)
-
-    return relevant_text, relevant_text_ids
 
 if __name__ == "__main__":
     st.set_page_config(page_title="RAG Question Answer")
@@ -161,9 +136,11 @@ if __name__ == "__main__":
         if not context_docs:
             st.write("No documents available. Please upload and process PDFs first.")
         else:
-            # Consolidate all retrieved documents for LLM
-            consolidated_context = consolidate_context(context_docs)
-            response = call_llm(context=consolidated_context, prompt=user_prompt)
+            # Concatenate all retrieved documents into a single context
+            concatenated_context = "\n\n".join(context_docs)
+
+            # Pass concatenated context to LLM
+            response = call_llm(context=concatenated_context, prompt=user_prompt)
 
             placeholder = st.empty()
             full_response = ""
@@ -176,4 +153,4 @@ if __name__ == "__main__":
 
             with st.expander("See most relevant document IDs"):
                 st.write(results.get("ids", [[]])[0])
-                st.write(consolidated_context)
+                st.write(concatenated_context)
