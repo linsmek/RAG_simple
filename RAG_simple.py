@@ -25,21 +25,16 @@ user question will be passed as "Question:"
 
 To answer the question:
 1. Thoroughly analyze the context, identifying key information relevant to the question.
-2. Organize your thoughts and plan your response to ensure a logical flow of information.
-3. Formulate a detailed answer that directly addresses the question, using only the information provided in the context.
-4. Ensure your answer is comprehensive, covering all relevant aspects found in the context.
-5. If the context doesn't contain sufficient information to fully answer the question, state this clearly in your response.
-6. Ask clarification questions if the question is too vague.
-7. If the request is general (e.g., "hi!" or "how are you?"), respond appropriately.
-8. Avoid fabricating information but offer logical suggestions if data is missing in the documents.
-9. Process information from multiple documents, providing a consolidated and detailed answer when necessary.
+2. Include all relevant information from multiple documents, especially for questions that require comprehensive or consolidated answers.
+3. Organize your response logically and ensure it covers all aspects of the question.
+4. If the context is insufficient to fully answer the question, state this clearly in your response.
 
 Format your response as follows:
 1. Use clear, concise language.
 2. Organize your answer into paragraphs for readability.
 3. Use bullet points or numbered lists where appropriate.
 4. Use headings or subheadings if relevant.
-5. Ensure proper grammar, punctuation, and spelling.
+5. Ensure proper grammar, punctuation, and spelling throughout your response.
 
 Important: Base your entire response solely on the information provided in the context. Do not include any external knowledge or assumptions not present in the given text.
 """
@@ -115,6 +110,10 @@ def call_llm(context: str, prompt: str):
         else:
             break
 
+def consolidate_context(documents: list[str]) -> str:
+    """Concatenate all document texts into a single context."""
+    return "\n\n".join(documents)
+
 def re_rank_cross_encoders(documents: list[str], query: str) -> tuple[str, list[int]]:
     relevant_text = ""
     relevant_text_ids = []
@@ -162,8 +161,9 @@ if __name__ == "__main__":
         if not context_docs:
             st.write("No documents available. Please upload and process PDFs first.")
         else:
-            relevant_text, relevant_text_ids = re_rank_cross_encoders(context_docs, user_prompt)
-            response = call_llm(context=relevant_text, prompt=user_prompt)
+            # Consolidate all retrieved documents for LLM
+            consolidated_context = consolidate_context(context_docs)
+            response = call_llm(context=consolidated_context, prompt=user_prompt)
 
             placeholder = st.empty()
             full_response = ""
@@ -175,6 +175,5 @@ if __name__ == "__main__":
                 st.write(results)
 
             with st.expander("See most relevant document IDs"):
-                st.write(relevant_text_ids)
-                st.write(relevant_text)
-
+                st.write(results.get("ids", [[]])[0])
+                st.write(consolidated_context)
