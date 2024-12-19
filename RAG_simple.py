@@ -12,6 +12,14 @@ Created on Fri Dec 13 16:37:58 2024
 
 @author: linamekouar
 """
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Fri Dec 13 16:37:58 2024
+
+@author: linamekouar
+"""
+
 import os
 import tempfile
 import requests
@@ -25,6 +33,9 @@ from langchain.embeddings.base import Embeddings
 from langchain.vectorstores import FAISS
 import chromadb
 from chromadb.utils.embedding_functions.ollama_embedding_function import OllamaEmbeddingFunction
+
+# Configure la page en premier
+st.set_page_config(page_title="RAG Question Answer")
 
 # System Prompt
 system_prompt = """
@@ -188,8 +199,6 @@ def call_llm(context: str, prompt: str, history: list[dict], temperature: float)
 
 # Main App
 if __name__ == "__main__":
-    st.set_page_config(page_title="RAG Question Answer")
-
     with st.sidebar:
         st.header("🗣️ RAG Question Answer")
         backend = st.selectbox("Choose Backend", ["FAISS", "ChromaDB"], index=0)
