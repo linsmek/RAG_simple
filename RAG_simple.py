@@ -5,6 +5,13 @@ Created on Fri Dec 13 16:37:58 2024
 
 @author: linamekouar
 """
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Fri Dec 13 16:37:58 2024
+
+@author: linamekouar
+"""
 import os
 import tempfile
 import requests
@@ -46,6 +53,7 @@ Format your response as follows:
 
 Important: Do not include any external knowledge or assumptions not present in the given text except in 6. or 7. situation. Don't ever hallucinate an answer.
 """
+
 # Initialize search history
 if "history" not in st.session_state:
     st.session_state.history = []
@@ -157,7 +165,7 @@ def query_collection(prompt: str, space: str, backend: str, n_results: int = 10)
         return results
 
 # Call LLM
-def call_llm(context: str, prompt: str, history: list[dict]):
+def call_llm(context: str, prompt: str, history: list[dict], temperature: float):
     history_text = "\n\n".join(
         [f"Q: {entry['question']}\nA: {entry['answer']}" for entry in history]
     )
@@ -166,6 +174,7 @@ def call_llm(context: str, prompt: str, history: list[dict]):
     response = ollama.chat(
         model="llama3.2",
         stream=True,
+        temperature=temperature,  # On passe la température ici
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": f"Context: {full_context}\n\nQuestion: {prompt}"},
@@ -187,6 +196,9 @@ if __name__ == "__main__":
         chunk_size = st.number_input("Set Chunk Size (characters):", min_value=100, max_value=2000, value=400, step=100)
         chunk_overlap = int(chunk_size * 0.2)
         space = st.selectbox("Choose Distance Metric:", ["cosine", "euclidean", "dot"], index=0)
+        
+        # Slider pour ajuster la température du modèle
+        temperature = st.slider("Température du modèle", min_value=0.0, max_value=1.0, value=0.7, step=0.1)
 
         uploaded_files = st.file_uploader(
             "**📑 Upload PDF files for QnA**", type=["pdf"], accept_multiple_files=True
@@ -211,11 +223,13 @@ if __name__ == "__main__":
             st.write(f"No documents available in {backend}. Please upload and process PDFs first.")
         else:
             concatenated_context = "\n\n".join(context_docs)
-            # Include search history in the call to LLM
             placeholder = st.empty()
             full_response = ""
             response_stream = call_llm(
-                context=concatenated_context, prompt=user_prompt, history=st.session_state.history
+                context=concatenated_context,
+                prompt=user_prompt,
+                history=st.session_state.history,
+                temperature=temperature
             )
             for r in response_stream:
                 full_response += r
