@@ -6,12 +6,18 @@ Created on Fri Dec 13 16:37:58 2024
 
 @author: linamekouar
 """
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Fri Dec 13 16:37:58 2024
 
+@author: linamekouar
+"""
 import os
 import tempfile
 import requests
-import ollama
 import streamlit as st
+from langchain.llms import Ollama
 from langchain.document_loaders import PyMuPDFLoader
 from langchain.schema import Document
 from langchain.text_splitter import RecursiveCharacterTextSplitter
@@ -21,7 +27,7 @@ from langchain.vectorstores import FAISS
 import chromadb
 from chromadb.utils.embedding_functions.ollama_embedding_function import OllamaEmbeddingFunction
 
-# Configure la page en premier pour éviter les erreurs
+# Configure the page
 st.set_page_config(page_title="RAG Question Answer")
 
 # System Prompt
@@ -52,14 +58,14 @@ Format your response as follows:
 Important: Do not include any external knowledge or assumptions not present in the given text except in 6. or 7. situations. Don't ever hallucinate an answer.
 """
 
-# Initialisation de l'historique des recherches
+# Initialize search history
 if "history" not in st.session_state:
     st.session_state.history = []
 
-# Chemin de l'index FAISS
+# FAISS index path
 FAISS_INDEX_PATH = "./faiss_index"
 
-# Classe pour les embeddings Ollama
+# Embeddings class for Ollama
 class OllamaEmbeddings(Embeddings):
     def __init__(self, url: str, model_name: str):
         self.url = url
@@ -83,13 +89,13 @@ class OllamaEmbeddings(Embeddings):
             raise ValueError(f"Expected 'embedding' in response. Got: {data}")
         return data["embedding"]
 
-# Instanciation des embeddings
+# Instantiate embeddings
 EMBEDDINGS = OllamaEmbeddings(
     url="http://localhost:11434/api/embeddings",
     model_name="nomic-embed-text:latest",
 )
 
-# Fonction pour traiter les documents PDF
+# Function to process PDF documents
 def process_document(uploaded_file: UploadedFile, chunk_size: int, chunk_overlap: int) -> list[Document]:
     temp_file = tempfile.NamedTemporaryFile("wb", suffix=".pdf", delete=False)
     temp_file.write(uploaded_file.read())
@@ -106,7 +112,7 @@ def process_document(uploaded_file: UploadedFile, chunk_size: int, chunk_overlap
     )
     return text_splitter.split_documents(docs)
 
-# Fonctions pour FAISS
+# FAISS functions
 def load_faiss_vectorstore() -> FAISS:
     if os.path.exists(FAISS_INDEX_PATH):
         return FAISS.load_local(FAISS_INDEX_PATH, EMBEDDINGS, allow_dangerous_deserialization=True)
@@ -115,7 +121,7 @@ def load_faiss_vectorstore() -> FAISS:
 def save_faiss_vectorstore(vectorstore: FAISS):
     vectorstore.save_local(FAISS_INDEX_PATH)
 
-# Fonctions pour ChromaDB
+# ChromaDB functions
 def get_chromadb_collection(space: str) -> chromadb.Collection:
     ollama_ef = OllamaEmbeddingFunction(
         url="http://localhost:11434/api/embeddings",
@@ -128,7 +134,7 @@ def get_chromadb_collection(space: str) -> chromadb.Collection:
         metadata={"hnsw:space": space},
     )
 
-# Fonction pour ajouter des documents à la collection vectorielle
+# Function to add documents to the vector collection
 def add_to_vector_collection(all_splits: list[Document], file_name: str, space: str, backend: str):
     documents = [doc.page_content for doc in all_splits]
     metadatas = [doc.metadata if doc.metadata else {} for doc in all_splits]
@@ -146,7 +152,7 @@ def add_to_vector_collection(all_splits: list[Document], file_name: str, space: 
         collection.upsert(documents=documents, metadatas=metadatas, ids=ids)
     st.success(f"Data from {file_name} added to the {backend} vector store!")
 
-# Fonction pour interroger la collection
+# Function to query the collection
 def query_collection(prompt: str, space: str, backend: str, n_results: int = 10):
     if backend == "FAISS":
         vectorstore = load_faiss_vectorstore()
@@ -162,29 +168,26 @@ def query_collection(prompt: str, space: str, backend: str, n_results: int = 10)
         results = collection.query(query_texts=[prompt], n_results=n_results)
         return results
 
-# Fonction pour appeler le LLM avec la température
+# Function to call the LLM with dynamic temperature
 def call_llm(context: str, prompt: str, history: list[dict], temperature: float):
     history_text = "\n\n".join(
         [f"Q: {entry['question']}\nA: {entry['answer']}" for entry in history]
     )
     full_context = f"{history_text}\n\n{context}"
 
-    response = ollama.chat(
-        model="llama3.2",
-        stream=True,
-        temperature=temperature,  # Passage de la température ici
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Context: {full_context}\n\nQuestion: {prompt}"},
-        ],
+    llm = Ollama(
+        base_url="http://localhost:11434",  # Adjust the base URL if needed
+        model="llama2",  # Replace with your specific model name
+        temperature=temperature,
     )
-    for chunk in response:
-        if not chunk["done"]:
-            yield chunk["message"]["content"]
-        else:
-            break
 
-# Application principale Streamlit
+    # Combine the system prompt and user prompt
+    full_prompt = f"{system_prompt}\n\nContext: {full_context}\n\nQuestion: {prompt}"
+
+    response = llm(full_prompt)
+    yield response
+
+# Main Streamlit application
 if __name__ == "__main__":
     with st.sidebar:
         st.header("🗣️ RAG Question Answer")
@@ -193,9 +196,9 @@ if __name__ == "__main__":
         chunk_overlap = int(chunk_size * 0.2)
         space = st.selectbox("Choose Distance Metric:", ["cosine", "euclidean", "dot"], index=0)
         
-        # Slider pour ajuster la température du modèle
-        temperature = st.slider("Température du modèle", min_value=0.0, max_value=1.0, value=0.7, step=0.1)
-
+        # Slider for dynamic temperature
+        temperature = st.slider("Model Temperature", min_value=0.1, max_value=1.0, value=0.5, step=0.1)
+        
         uploaded_files = st.file_uploader(
             "**📑 Upload PDF files for QnA**", type=["pdf"], accept_multiple_files=True
         )
@@ -225,25 +228,25 @@ if __name__ == "__main__":
                 context=concatenated_context,
                 prompt=user_prompt,
                 history=st.session_state.history,
-                temperature=temperature  # Passage de la température ici
+                temperature=temperature  # Pass the temperature from the slider
             )
             for r in response_stream:
                 full_response += r
                 placeholder.markdown(full_response)
 
-            # Mise à jour de l'historique des recherches
+            # Update search history
             st.session_state.history.append({"question": user_prompt, "answer": full_response})
 
-            # Affichage de l'historique des recherches
+            # Display search history
             with st.expander("Search History"):
                 for entry in st.session_state.history:
                     st.write(f"**Q:** {entry['question']}\n**A:** {entry['answer']}\n---")
 
-            # Affichage des documents récupérés
+            # Display retrieved documents
             with st.expander("See retrieved documents"):
                 st.write(results)
 
-            # Affichage des IDs des documents les plus pertinents
+            # Display IDs of the most relevant documents
             with st.expander("See most relevant document IDs"):
                 st.write(results.get("ids", [[]])[0])
                 st.write(concatenated_context)
