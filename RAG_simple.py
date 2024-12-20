@@ -1,19 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-Created on Fri Dec 13 16:37:58 2024
 
-@author: linamekouar
-"""
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Created on Fri Dec 13 16:37:58 2024
-
-@author: linamekouar
-"""
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Created on Fri Dec 13 16:37:58 2024
 
@@ -34,7 +21,7 @@ from langchain.vectorstores import FAISS
 import chromadb
 from chromadb.utils.embedding_functions.ollama_embedding_function import OllamaEmbeddingFunction
 
-# Configure la page en premier
+# Configure la page en premier pour éviter les erreurs
 st.set_page_config(page_title="RAG Question Answer")
 
 # System Prompt
@@ -50,8 +37,8 @@ user question will be passed as "Question:"
 3. Formulate a detailed answer that directly addresses the question, using only the information provided in the context.
 4. Ensure your answer is comprehensive, covering all relevant aspects found in the context.
 5. If the context doesn't contain sufficient information to fully answer the question, state this clearly in your response.
-6. If the question or request has no link whatsoever and is just a general question such as "hi" or "how are you" please use you knowledge to answer it
-7. If the question is kind of related but you don't have any information surch as "what type of career can someone do with the background aquired with this course?" make some sugegstion after mentionning that no information was to be found in the documents.
+6. If the question or request has no link whatsoever and is just a general question such as "hi" or "how are you" please use your knowledge to answer it
+7. If the question is kind of related but you don't have any information such as "what type of career can someone do with the background acquired with this course?" make some suggestions after mentioning that no information was to be found in the documents.
 8. If the user asks you about the previous question find it in the 'history' and re-state it to the user and answer it again.
 9. If the question is about multiple documents don't forget to go through each of them to find the answer
 
@@ -62,17 +49,17 @@ Format your response as follows:
 4. If relevant, include any headings or subheadings to structure your response.
 5. Ensure proper grammar, punctuation, and spelling throughout your answer.
 
-Important: Do not include any external knowledge or assumptions not present in the given text except in 6. or 7. situation. Don't ever hallucinate an answer.
+Important: Do not include any external knowledge or assumptions not present in the given text except in 6. or 7. situations. Don't ever hallucinate an answer.
 """
 
-# Initialize search history
+# Initialisation de l'historique des recherches
 if "history" not in st.session_state:
     st.session_state.history = []
-    
-# FAISS Index Path
+
+# Chemin de l'index FAISS
 FAISS_INDEX_PATH = "./faiss_index"
 
-# Ollama Embeddings Class
+# Classe pour les embeddings Ollama
 class OllamaEmbeddings(Embeddings):
     def __init__(self, url: str, model_name: str):
         self.url = url
@@ -96,13 +83,13 @@ class OllamaEmbeddings(Embeddings):
             raise ValueError(f"Expected 'embedding' in response. Got: {data}")
         return data["embedding"]
 
-# Instantiate EMBEDDINGS
+# Instanciation des embeddings
 EMBEDDINGS = OllamaEmbeddings(
     url="http://localhost:11434/api/embeddings",
     model_name="nomic-embed-text:latest",
 )
 
-# Process PDF Documents
+# Fonction pour traiter les documents PDF
 def process_document(uploaded_file: UploadedFile, chunk_size: int, chunk_overlap: int) -> list[Document]:
     temp_file = tempfile.NamedTemporaryFile("wb", suffix=".pdf", delete=False)
     temp_file.write(uploaded_file.read())
@@ -119,7 +106,7 @@ def process_document(uploaded_file: UploadedFile, chunk_size: int, chunk_overlap
     )
     return text_splitter.split_documents(docs)
 
-# FAISS Functions
+# Fonctions pour FAISS
 def load_faiss_vectorstore() -> FAISS:
     if os.path.exists(FAISS_INDEX_PATH):
         return FAISS.load_local(FAISS_INDEX_PATH, EMBEDDINGS, allow_dangerous_deserialization=True)
@@ -128,7 +115,7 @@ def load_faiss_vectorstore() -> FAISS:
 def save_faiss_vectorstore(vectorstore: FAISS):
     vectorstore.save_local(FAISS_INDEX_PATH)
 
-# ChromaDB Functions
+# Fonctions pour ChromaDB
 def get_chromadb_collection(space: str) -> chromadb.Collection:
     ollama_ef = OllamaEmbeddingFunction(
         url="http://localhost:11434/api/embeddings",
@@ -141,7 +128,7 @@ def get_chromadb_collection(space: str) -> chromadb.Collection:
         metadata={"hnsw:space": space},
     )
 
-# Add to Vector Collection
+# Fonction pour ajouter des documents à la collection vectorielle
 def add_to_vector_collection(all_splits: list[Document], file_name: str, space: str, backend: str):
     documents = [doc.page_content for doc in all_splits]
     metadatas = [doc.metadata if doc.metadata else {} for doc in all_splits]
@@ -159,7 +146,7 @@ def add_to_vector_collection(all_splits: list[Document], file_name: str, space: 
         collection.upsert(documents=documents, metadatas=metadatas, ids=ids)
     st.success(f"Data from {file_name} added to the {backend} vector store!")
 
-# Query Collection
+# Fonction pour interroger la collection
 def query_collection(prompt: str, space: str, backend: str, n_results: int = 10):
     if backend == "FAISS":
         vectorstore = load_faiss_vectorstore()
@@ -175,7 +162,7 @@ def query_collection(prompt: str, space: str, backend: str, n_results: int = 10)
         results = collection.query(query_texts=[prompt], n_results=n_results)
         return results
 
-# Call LLM
+# Fonction pour appeler le LLM avec la température
 def call_llm(context: str, prompt: str, history: list[dict], temperature: float):
     history_text = "\n\n".join(
         [f"Q: {entry['question']}\nA: {entry['answer']}" for entry in history]
@@ -185,7 +172,7 @@ def call_llm(context: str, prompt: str, history: list[dict], temperature: float)
     response = ollama.chat(
         model="llama3.2",
         stream=True,
-        temperature=temperature,  # On passe la température ici
+        temperature=temperature,  # Passage de la température ici
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": f"Context: {full_context}\n\nQuestion: {prompt}"},
@@ -197,7 +184,7 @@ def call_llm(context: str, prompt: str, history: list[dict], temperature: float)
         else:
             break
 
-# Main App
+# Application principale Streamlit
 if __name__ == "__main__":
     with st.sidebar:
         st.header("🗣️ RAG Question Answer")
@@ -238,23 +225,25 @@ if __name__ == "__main__":
                 context=concatenated_context,
                 prompt=user_prompt,
                 history=st.session_state.history,
-                temperature=temperature
+                temperature=temperature  # Passage de la température ici
             )
             for r in response_stream:
                 full_response += r
                 placeholder.markdown(full_response)
 
-            # Update search history
+            # Mise à jour de l'historique des recherches
             st.session_state.history.append({"question": user_prompt, "answer": full_response})
 
-            # Display search history
+            # Affichage de l'historique des recherches
             with st.expander("Search History"):
                 for entry in st.session_state.history:
                     st.write(f"**Q:** {entry['question']}\n**A:** {entry['answer']}\n---")
 
+            # Affichage des documents récupérés
             with st.expander("See retrieved documents"):
                 st.write(results)
 
+            # Affichage des IDs des documents les plus pertinents
             with st.expander("See most relevant document IDs"):
                 st.write(results.get("ids", [[]])[0])
                 st.write(concatenated_context)
