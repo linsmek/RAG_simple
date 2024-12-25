@@ -27,11 +27,8 @@ from langchain.vectorstores import FAISS
 import chromadb
 from chromadb.utils.embedding_functions.ollama_embedding_function import OllamaEmbeddingFunction
 
-# ------------------------------------------------------------------------------
-# MUST BE THE FIRST STREAMLIT COMMAND:
-# ------------------------------------------------------------------------------
+# Configure the page
 st.set_page_config(page_title="RAG Question Answer")
-# ------------------------------------------------------------------------------
 
 # System Prompt
 system_prompt = """
@@ -61,11 +58,12 @@ Format your response as follows:
 Important: Do not include any external knowledge or assumptions not present in the given text except in 6. or 7. situations. Don't ever hallucinate an answer.
 """
 
-FAISS_INDEX_PATH = "./faiss_index"  # For FAISS
+# Initialize search history
+if "history" not in st.session_state:
+    st.session_state.history = []
 
-# ------------------------------------------------------------------------------
-# DEFINE CLASSES, FUNCTIONS (NO Streamlit calls at module level):
-# ------------------------------------------------------------------------------
+# FAISS index path
+FAISS_INDEX_PATH = "./faiss_index"
 
 # Embeddings class for Ollama
 class OllamaEmbeddings(Embeddings):
@@ -91,13 +89,13 @@ class OllamaEmbeddings(Embeddings):
             raise ValueError(f"Expected 'embedding' in response. Got: {data}")
         return data["embedding"]
 
-
+# Instantiate embeddings
 EMBEDDINGS = OllamaEmbeddings(
     url="http://localhost:11434/api/embeddings",
     model_name="nomic-embed-text:latest",
 )
 
-
+# Function to process PDF documents
 def process_document(uploaded_file: UploadedFile, chunk_size: int, chunk_overlap: int) -> list[Document]:
     temp_file = tempfile.NamedTemporaryFile("wb", suffix=".pdf", delete=False)
     temp_file.write(uploaded_file.read())
@@ -114,17 +112,16 @@ def process_document(uploaded_file: UploadedFile, chunk_size: int, chunk_overlap
     )
     return text_splitter.split_documents(docs)
 
-
+# FAISS functions
 def load_faiss_vectorstore() -> FAISS:
     if os.path.exists(FAISS_INDEX_PATH):
         return FAISS.load_local(FAISS_INDEX_PATH, EMBEDDINGS, allow_dangerous_deserialization=True)
     return None
 
-
 def save_faiss_vectorstore(vectorstore: FAISS):
     vectorstore.save_local(FAISS_INDEX_PATH)
 
-
+# ChromaDB functions
 def get_chromadb_collection(space: str) -> chromadb.Collection:
     ollama_ef = OllamaEmbeddingFunction(
         url="http://localhost:11434/api/embeddings",
@@ -137,14 +134,13 @@ def get_chromadb_collection(space: str) -> chromadb.Collection:
         metadata={"hnsw:space": space},
     )
 
-
+# Function to add documents to the vector collection
 def add_to_vector_collection(all_splits: list[Document], file_name: str, space: str, backend: str):
     documents = [doc.page_content for doc in all_splits]
     metadatas = [doc.metadata if doc.metadata else {} for doc in all_splits]
     ids = [f"{file_name}_{idx}" for idx in range(len(documents))]
 
     if backend == "FAISS":
-        # Default to cosine for FAISS
         vectorstore = load_faiss_vectorstore()
         if vectorstore is None:
             vectorstore = FAISS.from_texts(documents, EMBEDDINGS, metadatas=metadatas)
@@ -154,10 +150,9 @@ def add_to_vector_collection(all_splits: list[Document], file_name: str, space: 
     elif backend == "ChromaDB":
         collection = get_chromadb_collection(space)
         collection.upsert(documents=documents, metadatas=metadatas, ids=ids)
-
     st.success(f"Data from {file_name} added to the {backend} vector store!")
 
-
+# Function to query the collection
 def query_collection(prompt: str, space: str, backend: str, n_results: int = 10):
     if backend == "FAISS":
         vectorstore = load_faiss_vectorstore()
@@ -168,13 +163,12 @@ def query_collection(prompt: str, space: str, backend: str, n_results: int = 10)
         metadatas = [doc.metadata for doc in results_docs]
         ids = [m.get("id", f"doc_{i}") for i, m in enumerate(metadatas)]
         return {"documents": [documents], "metadatas": [metadatas], "ids": [ids]}
-
     elif backend == "ChromaDB":
         collection = get_chromadb_collection(space)
         results = collection.query(query_texts=[prompt], n_results=n_results)
         return results
 
-
+# Function to call the LLM with dynamic temperature
 def call_llm(context: str, prompt: str, history: list[dict], temperature: float):
     history_text = "\n\n".join(
         [f"Q: {entry['question']}\nA: {entry['answer']}" for entry in history]
@@ -182,59 +176,31 @@ def call_llm(context: str, prompt: str, history: list[dict], temperature: float)
     full_context = f"{history_text}\n\n{context}"
 
     llm = Ollama(
-        base_url="http://localhost:11434",  
-        model="llama2",  # Replace with your Ollama model name
+        base_url="http://localhost:11434",  # Adjust the base URL if needed
+        model="llama2",  # Replace with your specific model name
         temperature=temperature,
     )
 
+    # Combine the system prompt and user prompt
     full_prompt = f"{system_prompt}\n\nContext: {full_context}\n\nQuestion: {prompt}"
+
     response = llm(full_prompt)
     yield response
 
-
-# ------------------------------------------------------------------------------
-# MAIN APP FUNCTION
-# ------------------------------------------------------------------------------
-def main():
-    # Initialize history in session (this is a Streamlit call, so it must be after set_page_config)
-    if "history" not in st.session_state:
-        st.session_state.history = []
-
+# Main Streamlit application
+if __name__ == "__main__":
     with st.sidebar:
         st.header("🗣️ RAG Question Answer")
-
         backend = st.selectbox("Choose Backend", ["FAISS", "ChromaDB"], index=0)
-
-        if backend == "ChromaDB":
-            space = st.selectbox(
-                "Choose Distance Metric (ChromaDB only)",
-                ["cosine", "euclidean", "dot"],
-                index=0
-            )
-        else:
-            space = "cosine"
-
-        chunk_size = st.number_input(
-            "Set Chunk Size (characters):",
-            min_value=100,
-            max_value=2000,
-            value=400,
-            step=100
-        )
+        chunk_size = st.number_input("Set Chunk Size (characters):", min_value=100, max_value=2000, value=400, step=100)
         chunk_overlap = int(chunk_size * 0.2)
-
-        temperature = st.slider(
-            "Model Temperature", 
-            min_value=0.0, 
-            max_value=1.0, 
-            value=0.5, 
-            step=0.1
-        )
-
+        space = st.selectbox("Choose Distance Metric:", ["cosine", "euclidean", "dot"], index=0)
+        
+        # Slider for dynamic temperature
+        temperature = st.slider("Model Temperature", min_value=0.1, max_value=1.0, value=0.5, step=0.1)
+        
         uploaded_files = st.file_uploader(
-            "**📑 Upload PDF files for QnA**", 
-            type=["pdf"], 
-            accept_multiple_files=True
+            "**📑 Upload PDF files for QnA**", type=["pdf"], accept_multiple_files=True
         )
         process = st.button("⚡️ Process All")
 
@@ -258,33 +224,29 @@ def main():
             concatenated_context = "\n\n".join(context_docs)
             placeholder = st.empty()
             full_response = ""
-
             response_stream = call_llm(
                 context=concatenated_context,
                 prompt=user_prompt,
                 history=st.session_state.history,
-                temperature=temperature
+                temperature=temperature  # Pass the temperature from the slider
             )
             for r in response_stream:
                 full_response += r
                 placeholder.markdown(full_response)
 
+            # Update search history
             st.session_state.history.append({"question": user_prompt, "answer": full_response})
 
+            # Display search history
             with st.expander("Search History"):
                 for entry in st.session_state.history:
                     st.write(f"**Q:** {entry['question']}\n**A:** {entry['answer']}\n---")
 
+            # Display retrieved documents
             with st.expander("See retrieved documents"):
                 st.write(results)
 
+            # Display IDs of the most relevant documents
             with st.expander("See most relevant document IDs"):
                 st.write(results.get("ids", [[]])[0])
                 st.write(concatenated_context)
-
-
-# ------------------------------------------------------------------------------
-# ENTRY POINT
-# ------------------------------------------------------------------------------
-if __name__ == "__main__":
-    main()
