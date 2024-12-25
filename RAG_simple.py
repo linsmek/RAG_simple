@@ -27,8 +27,6 @@ from langchain.vectorstores import FAISS
 import chromadb
 from chromadb.utils.embedding_functions.ollama_embedding_function import OllamaEmbeddingFunction
 
-# Configure the page
-st.set_page_config(page_title="RAG Question Answer")
 
 # System Prompt
 system_prompt = """
@@ -189,6 +187,8 @@ def call_llm(context: str, prompt: str, history: list[dict]):
 
 # Main Streamlit application
 if __name__ == "__main__":
+    # Configure the page
+    st.set_page_config(page_title="RAG Question Answer")
     with st.sidebar:
         st.header("🗣️ RAG Question Answer")
         backend = st.selectbox("Choose Backend", ["FAISS", "ChromaDB"], index=0)
