@@ -177,7 +177,7 @@ def call_llm(context: str, prompt: str, history: list[dict], temperature: float)
 
     llm = Ollama(
         base_url="http://localhost:11434",  # Adjust the base URL if needed
-        model="llama2",  # Replace with your specific model name
+        model="llama3.2",  # Replace with your specific model name
         temperature=temperature,
     )
 
