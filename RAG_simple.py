@@ -27,7 +27,7 @@ from langchain.vectorstores import FAISS
 import chromadb
 from chromadb.utils.embedding_functions.ollama_embedding_function import OllamaEmbeddingFunction
 
-# Configure the page
+# MUST be the first Streamlit command in the script:
 st.set_page_config(page_title="RAG Question Answer")
 
 # System Prompt
@@ -58,7 +58,7 @@ Format your response as follows:
 Important: Do not include any external knowledge or assumptions not present in the given text except in 6. or 7. situations. Don't ever hallucinate an answer.
 """
 
-# Initialize search history
+# Initialize search history in session state
 if "history" not in st.session_state:
     st.session_state.history = []
 
@@ -188,8 +188,7 @@ def call_llm(context: str, prompt: str, history: list[dict], temperature: float)
     response = llm(full_prompt)
     yield response
 
-# Main Streamlit application
-if __name__ == "__main__":
+def main():
     with st.sidebar:
         st.header("🗣️ RAG Question Answer")
         
@@ -270,3 +269,6 @@ if __name__ == "__main__":
             with st.expander("See most relevant document IDs"):
                 st.write(results.get("ids", [[]])[0])
                 st.write(concatenated_context)
+
+if __name__ == "__main__":
+    main()
