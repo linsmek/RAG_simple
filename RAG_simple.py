@@ -167,9 +167,10 @@ def query_collection(prompt: str, space: str, backend: str, n_results: int = 10)
         collection = get_chromadb_collection(space)
         results = collection.query(query_texts=[prompt], n_results=n_results)
         return results
+    
 
-# Function to call the LLM with dynamic temperature
-def call_llm(context: str, prompt: str, history: list[dict], temperature: float):
+# Function to call the LLM
+def call_llm(context: str, prompt: str, history: list[dict]):
     history_text = "\n\n".join(
         [f"Q: {entry['question']}\nA: {entry['answer']}" for entry in history]
     )
@@ -178,7 +179,6 @@ def call_llm(context: str, prompt: str, history: list[dict], temperature: float)
     llm = Ollama(
         base_url="http://localhost:11434",  # Adjust the base URL if needed
         model="llama3.2",  # Replace with your specific model name
-        temperature=temperature,
     )
 
     # Combine the system prompt and user prompt
@@ -228,7 +228,6 @@ if __name__ == "__main__":
                 context=concatenated_context,
                 prompt=user_prompt,
                 history=st.session_state.history,
-                temperature=temperature  # Pass the temperature from the slider
             )
             for r in response_stream:
                 full_response += r
