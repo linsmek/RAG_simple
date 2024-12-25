@@ -214,7 +214,7 @@ def call_llm(context: str, prompt: str, history: list[dict]):
 # 11) Main Streamlit Application
 # ---------------------------------------------------------------------------------
 def main():
-    st.set_page_config(page_title="RAG Question Answer")
+    #st.set_page_config(page_title="RAG Question Answer")
     # Sidebar configuration
     with st.sidebar:
         st.header("🗣️ RAG Question Answer")
@@ -280,7 +280,7 @@ def main():
             # Update search history
             st.session_state.history.append({"question": user_prompt, "answer": full_response})
 
-            # Display search history
+'''            # Display search history
             with st.expander("Search History"):
                 for entry in st.session_state.history:
                     st.write(f"**Q:** {entry['question']}\n**A:** {entry['answer']}\n---")
@@ -292,10 +292,11 @@ def main():
             # Display IDs of the most relevant documents
             with st.expander("See most relevant document IDs"):
                 st.write(results.get("ids", [[]])[0])
-                st.write(concatenated_context)
+                st.write(concatenated_context)'''
 
 # ---------------------------------------------------------------------------------
 # 12) Run the app
 # ---------------------------------------------------------------------------------
 if __name__ == "__main__":
     main()
+
