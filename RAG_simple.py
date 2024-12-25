@@ -30,8 +30,8 @@ from chromadb.utils.embedding_functions.ollama_embedding_function import OllamaE
 # ---------------------------------------------------------------------------------
 # 1) Call set_page_config FIRST, before any other Streamlit commands.
 # ---------------------------------------------------------------------------------
-st.set_page_config(page_title="RAG Question Answer")
-st.title("test")
+
+
 # ---------------------------------------------------------------------------------
 # 2) System Prompt
 # ---------------------------------------------------------------------------------
@@ -214,6 +214,7 @@ def call_llm(context: str, prompt: str, history: list[dict]):
 # 11) Main Streamlit Application
 # ---------------------------------------------------------------------------------
 def main():
+    st.set_page_config(page_title="RAG Question Answer")
     # Sidebar configuration
     with st.sidebar:
         st.header("🗣️ RAG Question Answer")
