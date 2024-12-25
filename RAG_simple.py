@@ -31,7 +31,7 @@ from chromadb.utils.embedding_functions.ollama_embedding_function import OllamaE
 # 1) Call set_page_config FIRST, before any other Streamlit commands.
 # ---------------------------------------------------------------------------------
 st.set_page_config(page_title="RAG Question Answer")
-
+st.title("test")
 # ---------------------------------------------------------------------------------
 # 2) System Prompt
 # ---------------------------------------------------------------------------------
@@ -157,6 +157,7 @@ def add_to_vector_collection(all_splits: list[Document], file_name: str, space: 
     ids = [f"{file_name}_{idx}" for idx in range(len(documents))]
 
     if backend == "FAISS":
+        # FAISS defaults to cosine similarity
         vectorstore = load_faiss_vectorstore()
         if vectorstore is None:
             vectorstore = FAISS.from_texts(documents, EMBEDDINGS, metadatas=metadatas)
@@ -174,6 +175,7 @@ def add_to_vector_collection(all_splits: list[Document], file_name: str, space: 
 # ---------------------------------------------------------------------------------
 def query_collection(prompt: str, space: str, backend: str, n_results: int = 10):
     if backend == "FAISS":
+        # FAISS always uses cosine by default in your code
         vectorstore = load_faiss_vectorstore()
         if vectorstore is None:
             return {"documents": [[]], "metadatas": [[]], "ids": [[]]}
@@ -182,6 +184,7 @@ def query_collection(prompt: str, space: str, backend: str, n_results: int = 10)
         metadatas = [doc.metadata for doc in results_docs]
         ids = [m.get("id", f"doc_{i}") for i, m in enumerate(metadatas)]
         return {"documents": [documents], "metadatas": [metadatas], "ids": [ids]}
+
     elif backend == "ChromaDB":
         collection = get_chromadb_collection(space)
         results = collection.query(query_texts=[prompt], n_results=n_results)
@@ -215,6 +218,14 @@ def main():
     with st.sidebar:
         st.header("🗣️ RAG Question Answer")
         backend = st.selectbox("Choose Backend", ["FAISS", "ChromaDB"], index=0)
+
+        # Only show distance metric options if ChromaDB is selected
+        if backend == "ChromaDB":
+            space = st.selectbox("Choose Distance Metric:", ["cosine", "euclidean", "dot"], index=0)
+        else:
+            # Default to "cosine" for FAISS
+            space = "cosine"
+
         chunk_size = st.number_input(
             "Set Chunk Size (characters):",
             min_value=100,
@@ -223,7 +234,6 @@ def main():
             step=100
         )
         chunk_overlap = int(chunk_size * 0.2)
-        space = st.selectbox("Choose Distance Metric:", ["cosine", "euclidean", "dot"], index=0)
 
         # Slider for dynamic temperature (not yet used in code, but you can adjust to pass it to LLM)
         temperature = st.slider("Model Temperature", min_value=0.1, max_value=1.0, value=0.5, step=0.1)
