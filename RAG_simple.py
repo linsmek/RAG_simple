@@ -27,8 +27,14 @@ from langchain.vectorstores import FAISS
 import chromadb
 from chromadb.utils.embedding_functions.ollama_embedding_function import OllamaEmbeddingFunction
 
+# ---------------------------------------------------------------------------------
+# 1) Call set_page_config FIRST, before any other Streamlit commands.
+# ---------------------------------------------------------------------------------
+st.set_page_config(page_title="RAG Question Answer")
 
-# System Prompt
+# ---------------------------------------------------------------------------------
+# 2) System Prompt
+# ---------------------------------------------------------------------------------
 system_prompt = """
 You are an AI assistant tasked with providing detailed answers based solely on the given context. 
 Your goal is to analyze the information provided and formulate a comprehensive, well-structured response to the question.
@@ -56,14 +62,18 @@ Format your response as follows:
 Important: Do not include any external knowledge or assumptions not present in the given text except in 6. or 7. situations. Don't ever hallucinate an answer.
 """
 
-# Initialize search history
+# ---------------------------------------------------------------------------------
+# 3) Initialize search history
+# ---------------------------------------------------------------------------------
 if "history" not in st.session_state:
     st.session_state.history = []
 
 # FAISS index path
 FAISS_INDEX_PATH = "./faiss_index"
 
-# Embeddings class for Ollama
+# ---------------------------------------------------------------------------------
+# 4) OllamaEmbeddings Class
+# ---------------------------------------------------------------------------------
 class OllamaEmbeddings(Embeddings):
     def __init__(self, url: str, model_name: str):
         self.url = url
@@ -93,7 +103,9 @@ EMBEDDINGS = OllamaEmbeddings(
     model_name="nomic-embed-text:latest",
 )
 
-# Function to process PDF documents
+# ---------------------------------------------------------------------------------
+# 5) PDF Processing
+# ---------------------------------------------------------------------------------
 def process_document(uploaded_file: UploadedFile, chunk_size: int, chunk_overlap: int) -> list[Document]:
     temp_file = tempfile.NamedTemporaryFile("wb", suffix=".pdf", delete=False)
     temp_file.write(uploaded_file.read())
@@ -110,7 +122,9 @@ def process_document(uploaded_file: UploadedFile, chunk_size: int, chunk_overlap
     )
     return text_splitter.split_documents(docs)
 
-# FAISS functions
+# ---------------------------------------------------------------------------------
+# 6) FAISS Helper Functions
+# ---------------------------------------------------------------------------------
 def load_faiss_vectorstore() -> FAISS:
     if os.path.exists(FAISS_INDEX_PATH):
         return FAISS.load_local(FAISS_INDEX_PATH, EMBEDDINGS, allow_dangerous_deserialization=True)
@@ -119,7 +133,9 @@ def load_faiss_vectorstore() -> FAISS:
 def save_faiss_vectorstore(vectorstore: FAISS):
     vectorstore.save_local(FAISS_INDEX_PATH)
 
-# ChromaDB functions
+# ---------------------------------------------------------------------------------
+# 7) ChromaDB Helper Functions
+# ---------------------------------------------------------------------------------
 def get_chromadb_collection(space: str) -> chromadb.Collection:
     ollama_ef = OllamaEmbeddingFunction(
         url="http://localhost:11434/api/embeddings",
@@ -132,7 +148,9 @@ def get_chromadb_collection(space: str) -> chromadb.Collection:
         metadata={"hnsw:space": space},
     )
 
-# Function to add documents to the vector collection
+# ---------------------------------------------------------------------------------
+# 8) Add Documents to Vector Collection
+# ---------------------------------------------------------------------------------
 def add_to_vector_collection(all_splits: list[Document], file_name: str, space: str, backend: str):
     documents = [doc.page_content for doc in all_splits]
     metadatas = [doc.metadata if doc.metadata else {} for doc in all_splits]
@@ -148,9 +166,12 @@ def add_to_vector_collection(all_splits: list[Document], file_name: str, space: 
     elif backend == "ChromaDB":
         collection = get_chromadb_collection(space)
         collection.upsert(documents=documents, metadatas=metadatas, ids=ids)
+
     st.success(f"Data from {file_name} added to the {backend} vector store!")
 
-# Function to query the collection
+# ---------------------------------------------------------------------------------
+# 9) Query the Collection
+# ---------------------------------------------------------------------------------
 def query_collection(prompt: str, space: str, backend: str, n_results: int = 10):
     if backend == "FAISS":
         vectorstore = load_faiss_vectorstore()
@@ -165,9 +186,10 @@ def query_collection(prompt: str, space: str, backend: str, n_results: int = 10)
         collection = get_chromadb_collection(space)
         results = collection.query(query_texts=[prompt], n_results=n_results)
         return results
-    
 
-# Function to call the LLM
+# ---------------------------------------------------------------------------------
+# 10) Call LLM
+# ---------------------------------------------------------------------------------
 def call_llm(context: str, prompt: str, history: list[dict]):
     history_text = "\n\n".join(
         [f"Q: {entry['question']}\nA: {entry['answer']}" for entry in history]
@@ -176,7 +198,7 @@ def call_llm(context: str, prompt: str, history: list[dict]):
 
     llm = Ollama(
         base_url="http://localhost:11434",  # Adjust the base URL if needed
-        model="llama3.2",  # Replace with your specific model name
+        model="llama3.2",                   # Replace with your specific model name
     )
 
     # Combine the system prompt and user prompt
@@ -185,22 +207,31 @@ def call_llm(context: str, prompt: str, history: list[dict]):
     response = llm(full_prompt)
     yield response
 
-# Main Streamlit application
-if __name__ == "__main__":
-    # Configure the page
-    st.set_page_config(page_title="RAG Question Answer")
+# ---------------------------------------------------------------------------------
+# 11) Main Streamlit Application
+# ---------------------------------------------------------------------------------
+def main():
+    # Sidebar configuration
     with st.sidebar:
         st.header("🗣️ RAG Question Answer")
         backend = st.selectbox("Choose Backend", ["FAISS", "ChromaDB"], index=0)
-        chunk_size = st.number_input("Set Chunk Size (characters):", min_value=100, max_value=2000, value=400, step=100)
+        chunk_size = st.number_input(
+            "Set Chunk Size (characters):",
+            min_value=100,
+            max_value=2000,
+            value=400,
+            step=100
+        )
         chunk_overlap = int(chunk_size * 0.2)
         space = st.selectbox("Choose Distance Metric:", ["cosine", "euclidean", "dot"], index=0)
-        
-        # Slider for dynamic temperature
+
+        # Slider for dynamic temperature (not yet used in code, but you can adjust to pass it to LLM)
         temperature = st.slider("Model Temperature", min_value=0.1, max_value=1.0, value=0.5, step=0.1)
-        
+
         uploaded_files = st.file_uploader(
-            "**📑 Upload PDF files for QnA**", type=["pdf"], accept_multiple_files=True
+            "**📑 Upload PDF files for QnA**", 
+            type=["pdf"], 
+            accept_multiple_files=True
         )
         process = st.button("⚡️ Process All")
 
@@ -210,7 +241,9 @@ if __name__ == "__main__":
                 all_splits = process_document(uploaded_file, chunk_size, chunk_overlap)
                 add_to_vector_collection(all_splits, file_name, space, backend)
 
+    # Main page
     st.header("🗣️ RAG Question Answer")
+
     user_prompt = st.text_area("**Ask a question related to your documents:**")
     ask = st.button("🔥 Ask")
 
@@ -249,3 +282,9 @@ if __name__ == "__main__":
             with st.expander("See most relevant document IDs"):
                 st.write(results.get("ids", [[]])[0])
                 st.write(concatenated_context)
+
+# ---------------------------------------------------------------------------------
+# 12) Run the app
+# ---------------------------------------------------------------------------------
+if __name__ == "__main__":
+    main()
