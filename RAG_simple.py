@@ -198,12 +198,11 @@ def query_collection(prompt: str, space: str, backend: str, n_results: int = 10)
         return results
 
 # ---------------------------------------------------------------------------------
-# 11) Call the LLM (with max_tokens limit)
+# 11) Call the LLM
 # ---------------------------------------------------------------------------------
-def call_llm(context: str, prompt: str, history: list[dict], temperature: float, max_tokens: int) -> str:
+def call_llm(context: str, prompt: str, history: list[dict], temperature: float) -> str:
     """
     Calls the Ollama LLM with a combined system prompt, context, conversation history, and user question.
-    Includes a max_tokens parameter to limit response length.
     """
     history_text = "\n\n".join(
         [f"Q: {entry['question']}\nA: {entry['answer']}" for entry in history]
@@ -211,11 +210,10 @@ def call_llm(context: str, prompt: str, history: list[dict], temperature: float,
     full_context = f"{history_text}\n\n{context}"
 
     llm = Ollama(
-    base_url="http://localhost:11434",
-    model="llama3.2",
-    temperature=temperature,
+        base_url="http://localhost:11434",  # Adjust if needed
+        model="llama3.2",
+        temperature=temperature,
     )
-
 
     full_prompt = f"{system_prompt}\n\nContext: {full_context}\n\nQuestion: {prompt}"
     response = llm(full_prompt)
@@ -250,7 +248,6 @@ def main():
 
         # Model parameters
         temperature = st.slider("Model Temperature", min_value=0.1, max_value=1.0, value=0.5, step=0.1)
-        max_tokens = st.number_input("Max Tokens per Response", min_value=50, max_value=2048, value=200, step=50)
 
         # File uploader
         uploaded_files = st.file_uploader(
@@ -269,6 +266,12 @@ def main():
                 add_to_vector_collection(all_splits, file_name, space, backend)
 
     st.title("📚 Chat with your PDF(s)")
+
+    # Button to RESET the session state
+    if st.button("Reset Chat History"):
+        st.session_state.history.clear()    # Clears the Q&A pairs
+        st.session_state.messages.clear()   # Clears the displayed chat messages
+        st.experimental_rerun()            # Forces the app to reload with fresh state
 
     # Display existing messages
     for msg in st.session_state.messages:
@@ -301,13 +304,12 @@ def main():
         else:
             concatenated_context = "\n\n".join(context_docs)
 
-        # Call LLM with max_tokens
+        # Call LLM
         raw_answer = call_llm(
             context=concatenated_context,
             prompt=user_query,
             history=st.session_state.history,
-            temperature=temperature,
-            max_tokens=max_tokens
+            temperature=temperature
         )
 
         assistant_reply = raw_answer
@@ -325,3 +327,4 @@ def main():
 # ---------------------------------------------------------------------------------
 if __name__ == "__main__":
     main()
+
