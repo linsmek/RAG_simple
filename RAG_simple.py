@@ -1,14 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-"""
-Created on Fri Dec 13 16:37:58 2024
-
-@author: linamekouar
-"""
-
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
 """
 Created on Fri Dec 13 16:37:58 2024
@@ -31,9 +23,8 @@ import chromadb
 from chromadb.utils.embedding_functions.ollama_embedding_function import OllamaEmbeddingFunction
 
 # ---------------------------------------------------------------------------------
-# 1) Set Page Config (Optional)
+# 1) (Optional) Page Config
 # ---------------------------------------------------------------------------------
-# You can uncomment the line below if you want to set a specific page title, etc.
 # st.set_page_config(page_title="RAG PDF Chatbot")
 
 # ---------------------------------------------------------------------------------
@@ -70,11 +61,9 @@ Important: Do not include any external knowledge or assumptions not present in t
 # 3) Initialize Search History & Chat Messages
 # ---------------------------------------------------------------------------------
 if "history" not in st.session_state:
-    # For storing Q&A pairs, used by the LLM in the prompt
     st.session_state.history = []
 
 if "messages" not in st.session_state:
-    # For displaying chat messages in Streamlit UI
     st.session_state.messages = [
         {
             "role": "system",
@@ -85,27 +74,21 @@ if "messages" not in st.session_state:
         }
     ]
 
-# Paths for storing FAISS index and ChromaDB
 FAISS_INDEX_PATH = "./faiss_index"
-CHROMA_DB_PATH   = "./chroma_store"
+CHROMA_DB_PATH = "./chroma_store"
 
 # ---------------------------------------------------------------------------------
 # 4) OllamaEmbeddings Class
 # ---------------------------------------------------------------------------------
 class OllamaEmbeddings(Embeddings):
-    """
-    Embeddings class that sends text to an Ollama server endpoint for embeddings.
-    """
     def __init__(self, url: str, model_name: str):
         self.url = url
         self.model_name = model_name
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
-        """Compute embeddings for a list of documents."""
         return [self._get_embedding(t) for t in texts]
 
     def embed_query(self, text: str) -> list[float]:
-        """Compute embedding for a single query text."""
         return self._get_embedding(text)
 
     def _get_embedding(self, text: str) -> list[float]:
@@ -121,7 +104,7 @@ class OllamaEmbeddings(Embeddings):
         return data["embedding"]
 
 # ---------------------------------------------------------------------------------
-# 5) Instantiate the Embeddings
+# 5) Instantiate Embeddings
 # ---------------------------------------------------------------------------------
 EMBEDDINGS = OllamaEmbeddings(
     url="http://localhost:11434/api/embeddings",
@@ -132,9 +115,6 @@ EMBEDDINGS = OllamaEmbeddings(
 # 6) PDF Processing
 # ---------------------------------------------------------------------------------
 def process_document(uploaded_file: UploadedFile, chunk_size: int, chunk_overlap: int) -> list[Document]:
-    """
-    Reads the uploaded PDF, splits it into chunks, and returns a list of Document objects.
-    """
     temp_file = tempfile.NamedTemporaryFile("wb", suffix=".pdf", delete=False)
     temp_file.write(uploaded_file.read())
     temp_file.flush()
@@ -154,27 +134,17 @@ def process_document(uploaded_file: UploadedFile, chunk_size: int, chunk_overlap
 # 7) FAISS Helper Functions
 # ---------------------------------------------------------------------------------
 def load_faiss_vectorstore() -> FAISS:
-    """
-    Loads an existing FAISS index from disk, or returns None if it doesn't exist.
-    """
     if os.path.exists(FAISS_INDEX_PATH):
         return FAISS.load_local(FAISS_INDEX_PATH, EMBEDDINGS, allow_dangerous_deserialization=True)
     return None
 
 def save_faiss_vectorstore(vectorstore: FAISS):
-    """
-    Saves the FAISS index to disk.
-    """
     vectorstore.save_local(FAISS_INDEX_PATH)
 
 # ---------------------------------------------------------------------------------
 # 8) ChromaDB Helper Functions
 # ---------------------------------------------------------------------------------
 def get_chromadb_collection(space: str) -> chromadb.Collection:
-    """
-    Returns an existing ChromaDB collection or creates it if it doesn't exist.
-    The 'space' parameter sets the distance metric (cosine, euclidean, dot).
-    """
     ollama_ef = OllamaEmbeddingFunction(
         url="http://localhost:11434/api/embeddings",
         model_name="nomic-embed-text:latest",
@@ -190,22 +160,17 @@ def get_chromadb_collection(space: str) -> chromadb.Collection:
 # 9) Add Documents to Vector Collection
 # ---------------------------------------------------------------------------------
 def add_to_vector_collection(all_splits: list[Document], file_name: str, space: str, backend: str):
-    """
-    Adds the chunked documents (from one PDF) to the vector store (either FAISS or ChromaDB).
-    """
     documents = [doc.page_content for doc in all_splits]
     metadatas = [doc.metadata if doc.metadata else {} for doc in all_splits]
     ids = [f"{file_name}_{idx}" for idx in range(len(documents))]
 
     if backend == "FAISS":
-        # FAISS uses cosine similarity by default in your code
         vectorstore = load_faiss_vectorstore()
         if vectorstore is None:
             vectorstore = FAISS.from_texts(documents, EMBEDDINGS, metadatas=metadatas)
         else:
             vectorstore.add_texts(documents, metadatas=metadatas)
         save_faiss_vectorstore(vectorstore)
-
     elif backend == "ChromaDB":
         collection = get_chromadb_collection(space)
         collection.upsert(documents=documents, metadatas=metadatas, ids=ids)
@@ -216,15 +181,9 @@ def add_to_vector_collection(all_splits: list[Document], file_name: str, space: 
 # 10) Query the Collection
 # ---------------------------------------------------------------------------------
 def query_collection(prompt: str, space: str, backend: str, n_results: int = 10):
-    """
-    Queries the chosen vector store (FAISS or ChromaDB) for the 'prompt',
-    returning up to 'n_results' matched chunks.
-    Returns a dict with keys: 'documents', 'metadatas', 'ids'.
-    """
     if backend == "FAISS":
         vectorstore = load_faiss_vectorstore()
         if vectorstore is None:
-            # Means no FAISS index has been created yet
             return {"documents": [[]], "metadatas": [[]], "ids": [[]]}
         results_docs = vectorstore.similarity_search(prompt, k=n_results)
         documents = [doc.page_content for doc in results_docs]
@@ -238,12 +197,12 @@ def query_collection(prompt: str, space: str, backend: str, n_results: int = 10)
         return results
 
 # ---------------------------------------------------------------------------------
-# 11) Call the LLM
+# 11) Call the LLM (with max_tokens limit)
 # ---------------------------------------------------------------------------------
-def call_llm(context: str, prompt: str, history: list[dict], temperature: float) -> str:
+def call_llm(context: str, prompt: str, history: list[dict], temperature: float, max_tokens: int) -> str:
     """
     Calls the Ollama LLM with a combined system prompt, context, conversation history, and user question.
-    Returns the LLM's response as a string.
+    Includes a max_tokens parameter to limit response length.
     """
     history_text = "\n\n".join(
         [f"Q: {entry['question']}\nA: {entry['answer']}" for entry in history]
@@ -251,9 +210,10 @@ def call_llm(context: str, prompt: str, history: list[dict], temperature: float)
     full_context = f"{history_text}\n\n{context}"
 
     llm = Ollama(
-        base_url="http://localhost:11434",  # Adjust to your Ollama server if needed
-        model="llama3.2",                   # Replace with the model you want to use
-        temperature=temperature
+        base_url="http://localhost:11434",  # Adjust if needed
+        model="llama3.2",
+        temperature=temperature,
+        max_tokens=max_tokens  # <-- Token length limit
     )
 
     full_prompt = f"{system_prompt}\n\nContext: {full_context}\n\nQuestion: {prompt}"
@@ -268,15 +228,16 @@ def main():
     with st.sidebar:
         st.header("🗣️ RAG Chat Bot")
 
-        # Choose which vector backend to use
+        # Select which vector backend to use
         backend = st.selectbox("Choose Backend", ["FAISS", "ChromaDB"], index=0)
 
-        # Distance metric (only applies to ChromaDB in your code)
+        # Distance metric for ChromaDB
         if backend == "ChromaDB":
             space = st.selectbox("Choose Distance Metric:", ["cosine", "euclidean", "dot"], index=0)
         else:
-            space = "cosine"  # Default for FAISS usage
+            space = "cosine"
 
+        # Chunk size & overlap
         chunk_size = st.number_input(
             "Set Chunk Size (characters):",
             min_value=100,
@@ -284,33 +245,28 @@ def main():
             value=400,
             step=100
         )
-
-        # Overlap defaults to 20% of chunk_size
         chunk_overlap = int(chunk_size * 0.2)
 
-        # Model temperature
+        # Model parameters
         temperature = st.slider("Model Temperature", min_value=0.1, max_value=1.0, value=0.5, step=0.1)
+        max_tokens = st.number_input("Max Tokens per Response", min_value=50, max_value=2048, value=200, step=50)
 
-        # File uploader for PDFs
+        # File uploader
         uploaded_files = st.file_uploader(
             "**📑 Upload PDF files for Q&A**", 
             type=["pdf"], 
             accept_multiple_files=True
         )
 
-        # Button to process the uploaded PDFs
-        process = st.button("⚡️ Process All")
+        # Button to process PDF(s)
+        process_button = st.button("⚡️ Process All")
 
-        if uploaded_files and process:
+        if uploaded_files and process_button:
             for uploaded_file in uploaded_files:
-                # Replace certain characters in file name
                 file_name = uploaded_file.name.translate(str.maketrans({"-": "_", ".": "_", " ": "_"}))
-                # Process the PDF into text chunks
                 all_splits = process_document(uploaded_file, chunk_size, chunk_overlap)
-                # Add the chunks to the chosen vector store
                 add_to_vector_collection(all_splits, file_name, space, backend)
 
-    # Main UI: Chat messages
     st.title("📚 Chat with your PDF(s)")
 
     # Display existing messages
@@ -321,7 +277,7 @@ def main():
         elif msg["role"] == "user":
             with st.chat_message("user"):
                 st.markdown(msg["content"])
-        else:  # "assistant"
+        else:  # assistant
             with st.chat_message("assistant"):
                 st.markdown(msg["content"])
 
@@ -329,35 +285,36 @@ def main():
     user_query = st.chat_input("Ask a question about your documents (or anything else)...")
 
     if user_query:
-        # Append user's message to chat
+        # User message
         st.session_state.messages.append({"role": "user", "content": user_query})
         with st.chat_message("user"):
             st.markdown(user_query)
 
-        # Query the vector store for relevant context
+        # Query collection
         results = query_collection(user_query, space, backend)
         context_docs = results.get("documents", [[]])[0]
 
-        # If no matching docs, use empty string as context
+        # If no docs, pass empty context
         if not context_docs:
             concatenated_context = ""
         else:
             concatenated_context = "\n\n".join(context_docs)
 
-        # Call the LLM with either the retrieved context or empty string
+        # Call LLM with max_tokens
         raw_answer = call_llm(
             context=concatenated_context,
             prompt=user_query,
             history=st.session_state.history,
-            temperature=temperature
+            temperature=temperature,
+            max_tokens=max_tokens
         )
 
         assistant_reply = raw_answer
 
-        # Add this Q&A to the search history (used in the LLM prompt)
+        # Update Q&A history
         st.session_state.history.append({"question": user_query, "answer": assistant_reply})
 
-        # Show the assistant message in the chat
+        # Display assistant reply
         st.session_state.messages.append({"role": "assistant", "content": assistant_reply})
         with st.chat_message("assistant"):
             st.markdown(assistant_reply)
