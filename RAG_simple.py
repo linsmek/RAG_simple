@@ -53,6 +53,7 @@ Format your response as follows:
 3. Use bullet points or numbered lists where appropriate to break down complex information.
 4. If relevant, include any headings or subheadings to structure your response.
 5. Ensure proper grammar, punctuation, and spelling throughout your answer.
+6. Please respond in a single sentence whenever the question is a simple greeting or short query.
 
 Important: Do not include any external knowledge or assumptions not present in the given text except in (6) or (7) situations. Don't ever hallucinate an answer.
 """
