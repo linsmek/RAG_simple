@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 
 """
 Created on Fri Dec 13 16:37:58 2024
@@ -269,9 +271,9 @@ def main():
 
     # Button to RESET the session state
     if st.button("Reset Chat History"):
-        st.session_state.history.clear()    # Clears the Q&A pairs
-        st.session_state.messages.clear()   # Clears the displayed chat messages
-        st.experimental_rerun()            # Forces the app to reload with fresh state
+        st.session_state.history.clear()   # Clears the Q&A pairs
+        st.session_state.messages.clear()  # Clears displayed chat messages
+        st.stop()                          # Ends execution (user can manually refresh if needed)
 
     # Display existing messages
     for msg in st.session_state.messages:
@@ -327,4 +329,3 @@ def main():
 # ---------------------------------------------------------------------------------
 if __name__ == "__main__":
     main()
-
