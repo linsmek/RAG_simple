@@ -6,13 +6,7 @@ Created on Fri Dec 13 16:37:58 2024
 
 @author: linamekouar
 """
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Created on Fri Dec 13 16:37:58 2024
 
-@author: linamekouar
-"""
 import os
 import tempfile
 import requests
@@ -30,7 +24,6 @@ from chromadb.utils.embedding_functions.ollama_embedding_function import OllamaE
 # ---------------------------------------------------------------------------------
 # 1) Call set_page_config FIRST, before any other Streamlit commands.
 # ---------------------------------------------------------------------------------
-
 
 # ---------------------------------------------------------------------------------
 # 2) System Prompt
@@ -65,8 +58,19 @@ Important: Do not include any external knowledge or assumptions not present in t
 # ---------------------------------------------------------------------------------
 # 3) Initialize search history
 # ---------------------------------------------------------------------------------
+# We'll keep a separate 'history' for document Q&A, and also use Streamlit's chat session.
+
 if "history" not in st.session_state:
     st.session_state.history = []
+
+if "messages" not in st.session_state:
+    # We'll store the chat messages (user & assistant) here
+    st.session_state.messages = [
+        {
+            "role": "system",
+            "content": "You are now chatting with a PDF-based RAG assistant. Ask questions about uploaded documents or any general questions."
+        }
+    ]
 
 # FAISS index path
 FAISS_INDEX_PATH = "./faiss_index"
@@ -175,7 +179,7 @@ def add_to_vector_collection(all_splits: list[Document], file_name: str, space: 
 # ---------------------------------------------------------------------------------
 def query_collection(prompt: str, space: str, backend: str, n_results: int = 10):
     if backend == "FAISS":
-        # FAISS always uses cosine by default in your code
+        # FAISS uses cosine by default in your code
         vectorstore = load_faiss_vectorstore()
         if vectorstore is None:
             return {"documents": [[]], "metadatas": [[]], "ids": [[]]}
@@ -193,31 +197,35 @@ def query_collection(prompt: str, space: str, backend: str, n_results: int = 10)
 # ---------------------------------------------------------------------------------
 # 10) Call LLM
 # ---------------------------------------------------------------------------------
-def call_llm(context: str, prompt: str, history: list[dict]):
+def call_llm(context: str, prompt: str, history: list[dict], temperature: float):
+    """
+    Stream responses from LLM. 
+    `history` is a list of Q&A dicts: [{'question': ...,'answer': ...}, ...]
+    """
     history_text = "\n\n".join(
         [f"Q: {entry['question']}\nA: {entry['answer']}" for entry in history]
     )
     full_context = f"{history_text}\n\n{context}"
 
     llm = Ollama(
-        base_url="http://localhost:11434",  # Adjust the base URL if needed
-        model="llama3.2",                   # Replace with your specific model name
+        base_url="http://localhost:11434",  # Adjust if needed
+        model="llama3.2",
+        temperature=temperature
     )
 
     # Combine the system prompt and user prompt
     full_prompt = f"{system_prompt}\n\nContext: {full_context}\n\nQuestion: {prompt}"
 
     response = llm(full_prompt)
-    yield response
+    return response
 
 # ---------------------------------------------------------------------------------
 # 11) Main Streamlit Application
 # ---------------------------------------------------------------------------------
 def main():
-    #st.set_page_config(page_title="RAG Question Answer")
     # Sidebar configuration
     with st.sidebar:
-        st.header("🗣️ RAG Question Answer")
+        st.header("🗣️ RAG Chat Bot")
         backend = st.selectbox("Choose Backend", ["FAISS", "ChromaDB"], index=0)
 
         # Only show distance metric options if ChromaDB is selected
@@ -236,7 +244,7 @@ def main():
         )
         chunk_overlap = int(chunk_size * 0.2)
 
-        # Slider for dynamic temperature (not yet used in code, but you can adjust to pass it to LLM)
+        # Slider for dynamic temperature
         temperature = st.slider("Model Temperature", min_value=0.1, max_value=1.0, value=0.5, step=0.1)
 
         uploaded_files = st.file_uploader(
@@ -252,51 +260,58 @@ def main():
                 all_splits = process_document(uploaded_file, chunk_size, chunk_overlap)
                 add_to_vector_collection(all_splits, file_name, space, backend)
 
-    # Main page
-    st.header("🗣️ RAG Question Answer")
+    st.title("📚 Chat with your PDF(s)")
 
-    user_prompt = st.text_area("**Ask a question related to your documents:**")
-    ask = st.button("🔥 Ask")
+    # Display existing messages (system / user / assistant)
+    for msg in st.session_state.messages:
+        if msg["role"] == "system":
+            with st.chat_message("system"):
+                st.markdown(msg["content"])
+        elif msg["role"] == "user":
+            with st.chat_message("user"):
+                st.markdown(msg["content"])
+        else:  # assistant
+            with st.chat_message("assistant"):
+                st.markdown(msg["content"])
 
-    if ask and user_prompt:
-        results = query_collection(user_prompt, space, backend)
+    # Chat input
+    if user_query := st.chat_input("Ask a question about your documents (or anything else)..."):
+        # Display user message in chat
+        st.session_state.messages.append({"role": "user", "content": user_query})
+        with st.chat_message("user"):
+            st.markdown(user_query)
+
+        # Retrieve relevant context
+        results = query_collection(user_query, space, backend)
         context_docs = results.get("documents", [[]])[0]
 
         if not context_docs:
-            st.write(f"No documents available in {backend}. Please upload and process PDFs first.")
+            # No docs found or no vector store found
+            assistant_reply = (
+                f"I couldn't find any documents in the {backend} vector store. "
+                "Please upload and process some PDFs first."
+            )
         else:
             concatenated_context = "\n\n".join(context_docs)
-            placeholder = st.empty()
-            full_response = ""
-            response_stream = call_llm(
+            # Call LLM
+            raw_answer = call_llm(
                 context=concatenated_context,
-                prompt=user_prompt,
+                prompt=user_query,
                 history=st.session_state.history,
+                temperature=temperature
             )
-            for r in response_stream:
-                full_response += r
-                placeholder.markdown(full_response)
+            assistant_reply = raw_answer
 
-            # Update search history
-            st.session_state.history.append({"question": user_prompt, "answer": full_response})
+            # Add to search history
+            st.session_state.history.append({"question": user_query, "answer": raw_answer})
 
-'''            # Display search history
-            with st.expander("Search History"):
-                for entry in st.session_state.history:
-                    st.write(f"**Q:** {entry['question']}\n**A:** {entry['answer']}\n---")
-
-            # Display retrieved documents
-            with st.expander("See retrieved documents"):
-                st.write(results)
-
-            # Display IDs of the most relevant documents
-            with st.expander("See most relevant document IDs"):
-                st.write(results.get("ids", [[]])[0])
-                st.write(concatenated_context)'''
+        # Display assistant reply
+        st.session_state.messages.append({"role": "assistant", "content": assistant_reply})
+        with st.chat_message("assistant"):
+            st.markdown(assistant_reply)
 
 # ---------------------------------------------------------------------------------
 # 12) Run the app
 # ---------------------------------------------------------------------------------
 if __name__ == "__main__":
     main()
-
