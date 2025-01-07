@@ -213,7 +213,6 @@ def call_llm(context: str, prompt: str, history: list[dict], temperature: float,
     base_url="http://localhost:11434",
     model="llama3.2",
     temperature=temperature,
-    num_ctx=512  # or another smaller value
     )
 
 
