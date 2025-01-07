@@ -7,6 +7,15 @@ Created on Fri Dec 13 16:37:58 2024
 @author: linamekouar
 """
 
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""
+Created on Fri Dec 13 16:37:58 2024
+
+@author: linamekouar
+"""
+
 import os
 import tempfile
 import requests
@@ -22,8 +31,10 @@ import chromadb
 from chromadb.utils.embedding_functions.ollama_embedding_function import OllamaEmbeddingFunction
 
 # ---------------------------------------------------------------------------------
-# 1) Call set_page_config FIRST, before any other Streamlit commands.
+# 1) Set Page Config (Optional)
 # ---------------------------------------------------------------------------------
+# You can uncomment the line below if you want to set a specific page title, etc.
+# st.set_page_config(page_title="RAG PDF Chatbot")
 
 # ---------------------------------------------------------------------------------
 # 2) System Prompt
@@ -40,10 +51,10 @@ user question will be passed as "Question:"
 3. Formulate a detailed answer that directly addresses the question, using only the information provided in the context.
 4. Ensure your answer is comprehensive, covering all relevant aspects found in the context.
 5. If the context doesn't contain sufficient information to fully answer the question, state this clearly in your response.
-6. If the question or request has no link whatsoever and is just a general question such as "hi" or "how are you" please use your knowledge to answer it
-7. If the question is kind of related but you don't have any information such as "what type of career can someone do with the background acquired with this course?" make some suggestions after mentioning that no information was to be found in the documents.
-8. If the user asks you about the previous question find it in the 'history' and re-state it to the user and answer it again.
-9. If the question is about multiple documents don't forget to go through each of them to find the answer
+6. If the question or request has no link whatsoever and is just a general question such as "hi" or "how are you," please use your knowledge to answer it.
+7. If the question is kind of related but no information is found in the documents, mention that no information was found, then provide general suggestions if appropriate.
+8. If the user asks you about a previous question, refer to the 'history' and re-state it to the user, then answer it again.
+9. If the question is about multiple documents, go through each of them to find the answer.
 
 Format your response as follows:
 1. Use clear, concise language.
@@ -52,41 +63,49 @@ Format your response as follows:
 4. If relevant, include any headings or subheadings to structure your response.
 5. Ensure proper grammar, punctuation, and spelling throughout your answer.
 
-Important: Do not include any external knowledge or assumptions not present in the given text except in 6. or 7. situations. Don't ever hallucinate an answer.
+Important: Do not include any external knowledge or assumptions not present in the given text except in (6) or (7) situations. Don't ever hallucinate an answer.
 """
 
 # ---------------------------------------------------------------------------------
-# 3) Initialize search history
+# 3) Initialize Search History & Chat Messages
 # ---------------------------------------------------------------------------------
-# We'll keep a separate 'history' for document Q&A, and also use Streamlit's chat session.
-
 if "history" not in st.session_state:
+    # For storing Q&A pairs, used by the LLM in the prompt
     st.session_state.history = []
 
 if "messages" not in st.session_state:
-    # We'll store the chat messages (user & assistant) here
+    # For displaying chat messages in Streamlit UI
     st.session_state.messages = [
         {
             "role": "system",
-            "content": "You are now chatting with a PDF-based RAG assistant. Ask questions about uploaded documents or any general questions."
+            "content": (
+                "You are now chatting with a PDF-based RAG assistant. "
+                "Feel free to ask questions about your uploaded documents or any general questions."
+            )
         }
     ]
 
-# FAISS index path
+# Paths for storing FAISS index and ChromaDB
 FAISS_INDEX_PATH = "./faiss_index"
+CHROMA_DB_PATH   = "./chroma_store"
 
 # ---------------------------------------------------------------------------------
 # 4) OllamaEmbeddings Class
 # ---------------------------------------------------------------------------------
 class OllamaEmbeddings(Embeddings):
+    """
+    Embeddings class that sends text to an Ollama server endpoint for embeddings.
+    """
     def __init__(self, url: str, model_name: str):
         self.url = url
         self.model_name = model_name
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        """Compute embeddings for a list of documents."""
         return [self._get_embedding(t) for t in texts]
 
     def embed_query(self, text: str) -> list[float]:
+        """Compute embedding for a single query text."""
         return self._get_embedding(text)
 
     def _get_embedding(self, text: str) -> list[float]:
@@ -101,16 +120,21 @@ class OllamaEmbeddings(Embeddings):
             raise ValueError(f"Expected 'embedding' in response. Got: {data}")
         return data["embedding"]
 
-# Instantiate embeddings
+# ---------------------------------------------------------------------------------
+# 5) Instantiate the Embeddings
+# ---------------------------------------------------------------------------------
 EMBEDDINGS = OllamaEmbeddings(
     url="http://localhost:11434/api/embeddings",
     model_name="nomic-embed-text:latest",
 )
 
 # ---------------------------------------------------------------------------------
-# 5) PDF Processing
+# 6) PDF Processing
 # ---------------------------------------------------------------------------------
 def process_document(uploaded_file: UploadedFile, chunk_size: int, chunk_overlap: int) -> list[Document]:
+    """
+    Reads the uploaded PDF, splits it into chunks, and returns a list of Document objects.
+    """
     temp_file = tempfile.NamedTemporaryFile("wb", suffix=".pdf", delete=False)
     temp_file.write(uploaded_file.read())
     temp_file.flush()
@@ -127,25 +151,35 @@ def process_document(uploaded_file: UploadedFile, chunk_size: int, chunk_overlap
     return text_splitter.split_documents(docs)
 
 # ---------------------------------------------------------------------------------
-# 6) FAISS Helper Functions
+# 7) FAISS Helper Functions
 # ---------------------------------------------------------------------------------
 def load_faiss_vectorstore() -> FAISS:
+    """
+    Loads an existing FAISS index from disk, or returns None if it doesn't exist.
+    """
     if os.path.exists(FAISS_INDEX_PATH):
         return FAISS.load_local(FAISS_INDEX_PATH, EMBEDDINGS, allow_dangerous_deserialization=True)
     return None
 
 def save_faiss_vectorstore(vectorstore: FAISS):
+    """
+    Saves the FAISS index to disk.
+    """
     vectorstore.save_local(FAISS_INDEX_PATH)
 
 # ---------------------------------------------------------------------------------
-# 7) ChromaDB Helper Functions
+# 8) ChromaDB Helper Functions
 # ---------------------------------------------------------------------------------
 def get_chromadb_collection(space: str) -> chromadb.Collection:
+    """
+    Returns an existing ChromaDB collection or creates it if it doesn't exist.
+    The 'space' parameter sets the distance metric (cosine, euclidean, dot).
+    """
     ollama_ef = OllamaEmbeddingFunction(
         url="http://localhost:11434/api/embeddings",
         model_name="nomic-embed-text:latest",
     )
-    chroma_client = chromadb.PersistentClient(path="./chroma_store")
+    chroma_client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
     return chroma_client.get_or_create_collection(
         name="rag_app",
         embedding_function=ollama_ef,
@@ -153,35 +187,44 @@ def get_chromadb_collection(space: str) -> chromadb.Collection:
     )
 
 # ---------------------------------------------------------------------------------
-# 8) Add Documents to Vector Collection
+# 9) Add Documents to Vector Collection
 # ---------------------------------------------------------------------------------
 def add_to_vector_collection(all_splits: list[Document], file_name: str, space: str, backend: str):
+    """
+    Adds the chunked documents (from one PDF) to the vector store (either FAISS or ChromaDB).
+    """
     documents = [doc.page_content for doc in all_splits]
     metadatas = [doc.metadata if doc.metadata else {} for doc in all_splits]
     ids = [f"{file_name}_{idx}" for idx in range(len(documents))]
 
     if backend == "FAISS":
-        # FAISS defaults to cosine similarity
+        # FAISS uses cosine similarity by default in your code
         vectorstore = load_faiss_vectorstore()
         if vectorstore is None:
             vectorstore = FAISS.from_texts(documents, EMBEDDINGS, metadatas=metadatas)
         else:
             vectorstore.add_texts(documents, metadatas=metadatas)
         save_faiss_vectorstore(vectorstore)
+
     elif backend == "ChromaDB":
         collection = get_chromadb_collection(space)
         collection.upsert(documents=documents, metadatas=metadatas, ids=ids)
 
-    st.success(f"Data from {file_name} added to the {backend} vector store!")
+    st.success(f"Data from '{file_name}' added to the {backend} vector store!")
 
 # ---------------------------------------------------------------------------------
-# 9) Query the Collection
+# 10) Query the Collection
 # ---------------------------------------------------------------------------------
 def query_collection(prompt: str, space: str, backend: str, n_results: int = 10):
+    """
+    Queries the chosen vector store (FAISS or ChromaDB) for the 'prompt',
+    returning up to 'n_results' matched chunks.
+    Returns a dict with keys: 'documents', 'metadatas', 'ids'.
+    """
     if backend == "FAISS":
-        # FAISS uses cosine by default in your code
         vectorstore = load_faiss_vectorstore()
         if vectorstore is None:
+            # Means no FAISS index has been created yet
             return {"documents": [[]], "metadatas": [[]], "ids": [[]]}
         results_docs = vectorstore.similarity_search(prompt, k=n_results)
         documents = [doc.page_content for doc in results_docs]
@@ -195,12 +238,12 @@ def query_collection(prompt: str, space: str, backend: str, n_results: int = 10)
         return results
 
 # ---------------------------------------------------------------------------------
-# 10) Call LLM
+# 11) Call the LLM
 # ---------------------------------------------------------------------------------
-def call_llm(context: str, prompt: str, history: list[dict], temperature: float):
+def call_llm(context: str, prompt: str, history: list[dict], temperature: float) -> str:
     """
-    Stream responses from LLM. 
-    `history` is a list of Q&A dicts: [{'question': ...,'answer': ...}, ...]
+    Calls the Ollama LLM with a combined system prompt, context, conversation history, and user question.
+    Returns the LLM's response as a string.
     """
     history_text = "\n\n".join(
         [f"Q: {entry['question']}\nA: {entry['answer']}" for entry in history]
@@ -208,32 +251,31 @@ def call_llm(context: str, prompt: str, history: list[dict], temperature: float)
     full_context = f"{history_text}\n\n{context}"
 
     llm = Ollama(
-        base_url="http://localhost:11434",  # Adjust if needed
-        model="llama3.2",
+        base_url="http://localhost:11434",  # Adjust to your Ollama server if needed
+        model="llama3.2",                   # Replace with the model you want to use
         temperature=temperature
     )
 
-    # Combine the system prompt and user prompt
     full_prompt = f"{system_prompt}\n\nContext: {full_context}\n\nQuestion: {prompt}"
-
     response = llm(full_prompt)
     return response
 
 # ---------------------------------------------------------------------------------
-# 11) Main Streamlit Application
+# 12) Main Streamlit Application
 # ---------------------------------------------------------------------------------
 def main():
     # Sidebar configuration
     with st.sidebar:
         st.header("🗣️ RAG Chat Bot")
+
+        # Choose which vector backend to use
         backend = st.selectbox("Choose Backend", ["FAISS", "ChromaDB"], index=0)
 
-        # Only show distance metric options if ChromaDB is selected
+        # Distance metric (only applies to ChromaDB in your code)
         if backend == "ChromaDB":
             space = st.selectbox("Choose Distance Metric:", ["cosine", "euclidean", "dot"], index=0)
         else:
-            # Default to "cosine" for FAISS
-            space = "cosine"
+            space = "cosine"  # Default for FAISS usage
 
         chunk_size = st.number_input(
             "Set Chunk Size (characters):",
@@ -242,27 +284,36 @@ def main():
             value=400,
             step=100
         )
+
+        # Overlap defaults to 20% of chunk_size
         chunk_overlap = int(chunk_size * 0.2)
 
-        # Slider for dynamic temperature
+        # Model temperature
         temperature = st.slider("Model Temperature", min_value=0.1, max_value=1.0, value=0.5, step=0.1)
 
+        # File uploader for PDFs
         uploaded_files = st.file_uploader(
-            "**📑 Upload PDF files for QnA**", 
+            "**📑 Upload PDF files for Q&A**", 
             type=["pdf"], 
             accept_multiple_files=True
         )
+
+        # Button to process the uploaded PDFs
         process = st.button("⚡️ Process All")
 
         if uploaded_files and process:
             for uploaded_file in uploaded_files:
+                # Replace certain characters in file name
                 file_name = uploaded_file.name.translate(str.maketrans({"-": "_", ".": "_", " ": "_"}))
+                # Process the PDF into text chunks
                 all_splits = process_document(uploaded_file, chunk_size, chunk_overlap)
+                # Add the chunks to the chosen vector store
                 add_to_vector_collection(all_splits, file_name, space, backend)
 
+    # Main UI: Chat messages
     st.title("📚 Chat with your PDF(s)")
 
-    # Display existing messages (system / user / assistant)
+    # Display existing messages
     for msg in st.session_state.messages:
         if msg["role"] == "system":
             with st.chat_message("system"):
@@ -270,48 +321,49 @@ def main():
         elif msg["role"] == "user":
             with st.chat_message("user"):
                 st.markdown(msg["content"])
-        else:  # assistant
+        else:  # "assistant"
             with st.chat_message("assistant"):
                 st.markdown(msg["content"])
 
     # Chat input
-    if user_query := st.chat_input("Ask a question about your documents (or anything else)..."):
-        # Display user message in chat
+    user_query = st.chat_input("Ask a question about your documents (or anything else)...")
+
+    if user_query:
+        # Append user's message to chat
         st.session_state.messages.append({"role": "user", "content": user_query})
         with st.chat_message("user"):
             st.markdown(user_query)
 
-        # Retrieve relevant context
+        # Query the vector store for relevant context
         results = query_collection(user_query, space, backend)
         context_docs = results.get("documents", [[]])[0]
 
+        # If no matching docs, use empty string as context
         if not context_docs:
-            # No docs found or no vector store found
-            assistant_reply = (
-                f"I couldn't find any documents in the {backend} vector store. "
-                "Please upload and process some PDFs first."
-            )
+            concatenated_context = ""
         else:
             concatenated_context = "\n\n".join(context_docs)
-            # Call LLM
-            raw_answer = call_llm(
-                context=concatenated_context,
-                prompt=user_query,
-                history=st.session_state.history,
-                temperature=temperature
-            )
-            assistant_reply = raw_answer
 
-            # Add to search history
-            st.session_state.history.append({"question": user_query, "answer": raw_answer})
+        # Call the LLM with either the retrieved context or empty string
+        raw_answer = call_llm(
+            context=concatenated_context,
+            prompt=user_query,
+            history=st.session_state.history,
+            temperature=temperature
+        )
 
-        # Display assistant reply
+        assistant_reply = raw_answer
+
+        # Add this Q&A to the search history (used in the LLM prompt)
+        st.session_state.history.append({"question": user_query, "answer": assistant_reply})
+
+        # Show the assistant message in the chat
         st.session_state.messages.append({"role": "assistant", "content": assistant_reply})
         with st.chat_message("assistant"):
             st.markdown(assistant_reply)
 
 # ---------------------------------------------------------------------------------
-# 12) Run the app
+# 13) Run the app
 # ---------------------------------------------------------------------------------
 if __name__ == "__main__":
     main()
