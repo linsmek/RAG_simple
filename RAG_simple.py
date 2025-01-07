@@ -1,9 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
 """
 Created on Fri Dec 13 16:37:58 2024
 
@@ -229,7 +226,7 @@ def main():
     with st.sidebar:
         st.header("🗣️ RAG Chat Bot")
 
-        # Select which vector backend to use
+        # Choose vector backend
         backend = st.selectbox("Choose Backend", ["FAISS", "ChromaDB"], index=0)
 
         # Distance metric for ChromaDB
@@ -248,17 +245,17 @@ def main():
         )
         chunk_overlap = int(chunk_size * 0.2)
 
-        # Model parameters
+        # Model temperature
         temperature = st.slider("Model Temperature", min_value=0.1, max_value=1.0, value=0.5, step=0.1)
 
-        # File uploader
+        # PDF Uploader
         uploaded_files = st.file_uploader(
             "**📑 Upload PDF files for Q&A**", 
             type=["pdf"], 
             accept_multiple_files=True
         )
 
-        # Button to process PDF(s)
+        # Process PDFs
         process_button = st.button("⚡️ Process All")
 
         if uploaded_files and process_button:
@@ -269,11 +266,11 @@ def main():
 
     st.title("📚 Chat with your PDF(s)")
 
-    # Button to RESET the session state
+    # Button to RESET chat
     if st.button("Reset Chat History"):
-        st.session_state.history.clear()   # Clears the Q&A pairs
-        st.session_state.messages.clear()  # Clears displayed chat messages
-        st.stop()                          # Ends execution (user can manually refresh if needed)
+        st.session_state.history.clear()
+        st.session_state.messages.clear()
+        st.write("Chat history cleared! Please refresh the page or type a new message to start fresh.")
 
     # Display existing messages
     for msg in st.session_state.messages:
@@ -287,20 +284,20 @@ def main():
             with st.chat_message("assistant"):
                 st.markdown(msg["content"])
 
-    # Chat input
+    # User chat input
     user_query = st.chat_input("Ask a question about your documents (or anything else)...")
 
     if user_query:
-        # User message
+        # Show user message
         st.session_state.messages.append({"role": "user", "content": user_query})
         with st.chat_message("user"):
             st.markdown(user_query)
 
-        # Query collection
+        # Query vector store
         results = query_collection(user_query, space, backend)
         context_docs = results.get("documents", [[]])[0]
 
-        # If no docs, pass empty context
+        # Build context from docs or use empty string
         if not context_docs:
             concatenated_context = ""
         else:
@@ -319,7 +316,7 @@ def main():
         # Update Q&A history
         st.session_state.history.append({"question": user_query, "answer": assistant_reply})
 
-        # Display assistant reply
+        # Show assistant response
         st.session_state.messages.append({"role": "assistant", "content": assistant_reply})
         with st.chat_message("assistant"):
             st.markdown(assistant_reply)
