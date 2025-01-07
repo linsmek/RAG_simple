@@ -210,11 +210,12 @@ def call_llm(context: str, prompt: str, history: list[dict], temperature: float,
     full_context = f"{history_text}\n\n{context}"
 
     llm = Ollama(
-        base_url="http://localhost:11434",  # Adjust if needed
-        model="llama3.2",
-        temperature=temperature,
-        max_tokens=max_tokens  # <-- Token length limit
+    base_url="http://localhost:11434",
+    model="llama3.2",
+    temperature=temperature,
+    num_ctx=512  # or another smaller value
     )
+
 
     full_prompt = f"{system_prompt}\n\nContext: {full_context}\n\nQuestion: {prompt}"
     response = llm(full_prompt)
