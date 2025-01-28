@@ -329,7 +329,7 @@ Question: {prompt}
 # ---------------------------------------------------------------------------------
 def main():
     st.title("Hello")
-    with st.sidebar:
+    '''with st.sidebar:
         st.header("🗣️ RAG Chat Bot (Auto Metadata)")
         backend = st.selectbox("Choose Backend", ["FAISS", "ChromaDB"], index=0)
 
@@ -417,7 +417,7 @@ def main():
 
         st.session_state.messages.append({"role": "assistant", "content": assistant_reply})
         with st.chat_message("assistant"):
-            st.markdown(assistant_reply)
+            st.markdown(assistant_reply)'''
 
 # ---------------------------------------------------------------------------------
 # 13) Run the app
