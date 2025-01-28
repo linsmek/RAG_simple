@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Created on Tue Jan  7 16:15:41 2025
 
@@ -328,6 +326,7 @@ Question: {prompt}
 # 12) Main Streamlit Application
 # ---------------------------------------------------------------------------------
 def main():
+    st.title("Hello")
     with st.sidebar:
         st.header("🗣️ RAG Chat Bot (Auto Metadata)")
         backend = st.selectbox("Choose Backend", ["FAISS", "ChromaDB"], index=0)
