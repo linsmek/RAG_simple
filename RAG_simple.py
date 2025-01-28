@@ -328,6 +328,7 @@ Question: {prompt}
 # 12) Main Streamlit Application
 # ---------------------------------------------------------------------------------
 def main():
+    st.title("Hello")
     with st.sidebar:
         st.header("🗣️ RAG Chat Bot (Auto Metadata)")
         backend = st.selectbox("Choose Backend", ["FAISS", "ChromaDB"], index=0)
