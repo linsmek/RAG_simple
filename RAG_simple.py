@@ -6,23 +6,15 @@ Created on Tue Jan  7 16:15:41 2025
 @author: linamekouar
 """
 
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
-"""
-Created on Fri Dec 13 16:37:58 2024
-
-@author: linamekouar
-"""
-
 import os
+import re
 import shutil
 import tempfile
 import requests
+import fitz  # PyMuPDF
 import streamlit as st
+
+# LangChain imports
 from langchain.llms import Ollama
 from langchain.document_loaders import PyMuPDFLoader
 from langchain.schema import Document
@@ -30,8 +22,15 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from streamlit.runtime.uploaded_file_manager import UploadedFile
 from langchain.embeddings.base import Embeddings
 from langchain.vectorstores import FAISS
+
+# Chroma imports
 import chromadb
 from chromadb.utils.embedding_functions.ollama_embedding_function import OllamaEmbeddingFunction
+
+# For memory and chain usage
+from langchain.memory import ConversationBufferMemory
+from langchain.prompts import PromptTemplate
+from langchain.chains import LLMChain
 
 # ---------------------------------------------------------------------------------
 # 1) (Optional) Page Config
@@ -70,11 +69,8 @@ Important: Do not include any external knowledge or assumptions not present in t
 """
 
 # ---------------------------------------------------------------------------------
-# 3) Initialize Search History & Chat Messages
+# 3) Initialize Chat Messages & Memory
 # ---------------------------------------------------------------------------------
-if "history" not in st.session_state:
-    st.session_state.history = []
-
 if "messages" not in st.session_state:
     st.session_state.messages = [
         {
@@ -85,6 +81,12 @@ if "messages" not in st.session_state:
             )
         }
     ]
+
+if "memory" not in st.session_state:
+    st.session_state.memory = ConversationBufferMemory(
+        memory_key="chat_history",
+        return_messages=True
+    )
 
 # Path constants
 FAISS_INDEX_PATH = "./faiss_index"
@@ -123,27 +125,96 @@ EMBEDDINGS = OllamaEmbeddings(
 )
 
 # ---------------------------------------------------------------------------------
-# 5) PDF Processing
+# 5) Automatic Metadata Extraction Helpers
 # ---------------------------------------------------------------------------------
-def process_document(uploaded_file: UploadedFile, chunk_size: int, chunk_overlap: int) -> list[Document]:
-    """Split a PDF into smaller chunks of text."""
+def extract_methods_and_results(full_text: str):
+
+    # e.g. from 'Methods' up to 'Results' or EOF
+    methods_pattern = r"(?is)(?<=methods)(.*?)(?=results|$)"
+    # e.g. from 'Results' up to 'Discussion' or 'Conclusion' or 'References' or EOF
+    results_pattern = r"(?is)(?<=results)(.*?)(?=discussion|conclusion|references|$)"
+
+    # Convert to lower for matching, but we store original substring
+    text_lower = full_text.lower()
+
+    methods_match = re.search(methods_pattern, text_lower)
+    results_match = re.search(results_pattern, text_lower)
+
+    # If we found them, let's slice them out
+    methods_text = ""
+    if methods_match:
+        start, end = methods_match.span()
+        methods_text = full_text[start:end].strip()
+
+    results_text = ""
+    if results_match:
+        start, end = results_match.span()
+        results_text = full_text[start:end].strip()
+
+    return methods_text, results_text
+
+def extract_metadata_from_pdf(pdf_path: str):
+
+
+    
+    with fitz.open(pdf_path) as doc:
+        meta = doc.metadata or {}
+    author = meta.get("author", "").strip()
+    title = meta.get("title", "").strip()
+
+    
+    loader = PyMuPDFLoader(pdf_path)
+    docs = loader.load()  
+
+    full_text = "\n".join(d.page_content for d in docs)
+
+    methods_text, results_text = extract_methods_and_results(full_text)
+
+    return author, title, methods_text, results_text
+
+# ---------------------------------------------------------------------------------
+# 6) Primary PDF Processing (Automatic Metadata)
+# ---------------------------------------------------------------------------------
+def process_document_auto_metadata(
+    uploaded_file: UploadedFile,
+    chunk_size: int,
+    chunk_overlap: int
+) -> list[Document]:
+
     temp_file = tempfile.NamedTemporaryFile("wb", suffix=".pdf", delete=False)
     temp_file.write(uploaded_file.read())
     temp_file.flush()
+    pdf_path = temp_file.name
 
-    loader = PyMuPDFLoader(temp_file.name)
+    # Extract metadata
+    author, title, methods_text, results_text = extract_metadata_from_pdf(pdf_path)
+
+    # Load again for chunking
+    loader = PyMuPDFLoader(pdf_path)
     docs = loader.load()
-    os.unlink(temp_file.name)
 
+    # Delete the temp file 
+    os.unlink(pdf_path)
+
+    # Split the PDF content into chunks
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
         separators=["\n\n", "\n", ".", "?", "!", " ", ""],
     )
-    return text_splitter.split_documents(docs)
+    split_docs = text_splitter.split_documents(docs)
+
+    # Attach the found metadata to each chunk
+    for doc in split_docs:
+        doc.metadata["author"] = author
+        doc.metadata["title"] = title
+        doc.metadata["method"] = methods_text
+        doc.metadata["results"] = results_text
+
+    return split_docs
 
 # ---------------------------------------------------------------------------------
-# 6) FAISS Helper Functions
+# 7) FAISS Helper Functions
 # ---------------------------------------------------------------------------------
 def load_faiss_vectorstore() -> FAISS:
     if os.path.exists(FAISS_INDEX_PATH):
@@ -154,7 +225,7 @@ def save_faiss_vectorstore(vectorstore: FAISS):
     vectorstore.save_local(FAISS_INDEX_PATH)
 
 # ---------------------------------------------------------------------------------
-# 7) ChromaDB Helper Functions
+# 8) ChromaDB Helper Functions
 # ---------------------------------------------------------------------------------
 def get_chromadb_collection(space: str) -> chromadb.Collection:
     ollama_ef = OllamaEmbeddingFunction(
@@ -169,7 +240,7 @@ def get_chromadb_collection(space: str) -> chromadb.Collection:
     )
 
 # ---------------------------------------------------------------------------------
-# 8) Add Documents to Vector Collection
+# 9) Add Documents to Vector Collection
 # ---------------------------------------------------------------------------------
 def add_to_vector_collection(all_splits: list[Document], file_name: str, space: str, backend: str):
     documents = [doc.page_content for doc in all_splits]
@@ -190,7 +261,7 @@ def add_to_vector_collection(all_splits: list[Document], file_name: str, space: 
     st.success(f"Data from '{file_name}' added to the {backend} vector store!")
 
 # ---------------------------------------------------------------------------------
-# 9) Query the Collection
+# 10) Query the Collection
 # ---------------------------------------------------------------------------------
 def query_collection(prompt: str, space: str, backend: str, n_results: int = 10):
     if backend == "FAISS":
@@ -202,41 +273,63 @@ def query_collection(prompt: str, space: str, backend: str, n_results: int = 10)
         metadatas = [doc.metadata for doc in results_docs]
         ids = [m.get("id", f"doc_{i}") for i, m in enumerate(metadatas)]
         return {"documents": [documents], "metadatas": [metadatas], "ids": [ids]}
-
     elif backend == "ChromaDB":
         collection = get_chromadb_collection(space)
         results = collection.query(query_texts=[prompt], n_results=n_results)
         return results
 
 # ---------------------------------------------------------------------------------
-# 10) Call the LLM
+# 11) Call the LLM with ConversationBufferMemory
 # ---------------------------------------------------------------------------------
-def call_llm(context: str, prompt: str, history: list[dict], temperature: float) -> str:
+def call_llm_with_memory(context: str, prompt: str, temperature: float) -> str:
     """
-    Calls the Ollama LLM with a combined system prompt, context, conversation history, and user question.
+    Calls the Ollama LLM using a ConversationBufferMemory for history.
+    The system_prompt is combined with 'context' and 'prompt' inside a PromptTemplate.
+    The prior conversation is automatically appended via the memory object.
     """
-    history_text = "\n\n".join(
-        [f"Q: {entry['question']}\nA: {entry['answer']}" for entry in history]
-    )
-    full_context = f"{history_text}\n\n{context}"
-
+    # 1) Create the LLM with your chosen temperature
     llm = Ollama(
-        base_url="http://localhost:11434",  # Adjust if needed
+        base_url="http://localhost:11434",
         model="llama3.2",
-        temperature=temperature
+        temperature=temperature,
+        num_ctx=4000
     )
 
-    full_prompt = f"{system_prompt}\n\nContext: {full_context}\n\nQuestion: {prompt}"
-    response = llm(full_prompt)
+    # 2) Define a prompt template that merges system prompt, retrieved context, and user query.
+    template = """{system_prompt}
+
+Context: {context}
+
+Question: {prompt}
+"""
+    prompt_template = PromptTemplate(
+        input_variables=["system_prompt", "context", "prompt"],
+        template=template
+    )
+
+    # 3) Build an LLMChain that has a memory object (ConversationBufferMemory).
+    chain = LLMChain(
+        llm=llm,
+        prompt=prompt_template,
+        memory=st.session_state.memory,  # conversation buffer
+        verbose=True
+    )
+
+    # 4) Run the chain
+    response = chain.run(
+        system_prompt=system_prompt,
+        context=context,
+        prompt=prompt
+    )
+
     return response
 
 # ---------------------------------------------------------------------------------
-# 11) Main Streamlit Application
+# 12) Main Streamlit Application
 # ---------------------------------------------------------------------------------
 def main():
-    # Sidebar configuration
     with st.sidebar:
-        st.header("🗣️ RAG Chat Bot")
+        st.header("🗣️ RAG Chat Bot (Auto Metadata)")
         backend = st.selectbox("Choose Backend", ["FAISS", "ChromaDB"], index=0)
 
         if backend == "ChromaDB":
@@ -255,6 +348,7 @@ def main():
 
         temperature = st.slider("Model Temperature", min_value=0.1, max_value=1.0, value=0.5, step=0.1)
 
+        # File uploader
         uploaded_files = st.file_uploader(
             "**📑 Upload PDF files for Q&A**", 
             type=["pdf"], 
@@ -262,31 +356,31 @@ def main():
         )
         process_button = st.button("⚡️ Process All")
 
+        # Process PDFs
         if uploaded_files and process_button:
             for uploaded_file in uploaded_files:
-                file_name = uploaded_file.name.translate(str.maketrans({"-": "_", ".": "_", " ": "_"}))
-                all_splits = process_document(uploaded_file, chunk_size, chunk_overlap)
+                file_name = uploaded_file.name.replace(" ", "_")
+                # Automatically parse metadata (author, title, methods, results)
+                all_splits = process_document_auto_metadata(
+                    uploaded_file,
+                    chunk_size,
+                    chunk_overlap
+                )
                 add_to_vector_collection(all_splits, file_name, space, backend)
 
-    # Title
-    st.title("📚 Chat with your PDF(s)")
+    st.title("📚 Chat with your PDF(s) — Automatic Metadata Extraction")
 
-    # Button to clear chat history AND delete vector store directories
     if st.button("Reset Everything (Chat + Vector Stores)"):
-        # Clear the chat in memory
-        st.session_state.history.clear()
         st.session_state.messages.clear()
+        st.session_state.memory.clear()
 
-        # Delete FAISS index folder if it exists
         if os.path.exists(FAISS_INDEX_PATH):
             shutil.rmtree(FAISS_INDEX_PATH, ignore_errors=True)
 
-        # Delete ChromaDB store if it exists
         if os.path.exists(CHROMA_DB_PATH):
             shutil.rmtree(CHROMA_DB_PATH, ignore_errors=True)
 
-        st.write("Chat history and vector stores have been cleared. "
-                 "Please refresh or ask a new question to start fresh.")
+        st.write("Chat history and vector stores have been cleared. Please refresh or ask a new question to start fresh.")
 
     # Display existing messages
     for msg in st.session_state.messages:
@@ -303,40 +397,29 @@ def main():
     # Chat input
     user_query = st.chat_input("Ask a question about your documents (or anything else)...")
     if user_query:
-        # Append user message
         st.session_state.messages.append({"role": "user", "content": user_query})
         with st.chat_message("user"):
             st.markdown(user_query)
 
-        # Query vector store
+        # Query vector store for relevant chunks
         results = query_collection(user_query, space, backend)
         context_docs = results.get("documents", [[]])[0]
 
-        if not context_docs:
-            concatenated_context = ""
-        else:
-            concatenated_context = "\n\n".join(context_docs)
+        concatenated_context = "\n\n".join(context_docs) if context_docs else ""
 
         # Call LLM
-        raw_answer = call_llm(
+        assistant_reply = call_llm_with_memory(
             context=concatenated_context,
             prompt=user_query,
-            history=st.session_state.history,
             temperature=temperature
         )
 
-        assistant_reply = raw_answer
-
-        # Update Q&A history
-        st.session_state.history.append({"question": user_query, "answer": assistant_reply})
-
-        # Display assistant reply
         st.session_state.messages.append({"role": "assistant", "content": assistant_reply})
         with st.chat_message("assistant"):
             st.markdown(assistant_reply)
 
 # ---------------------------------------------------------------------------------
-# 12) Run the app
+# 13) Run the app
 # ---------------------------------------------------------------------------------
 if __name__ == "__main__":
     main()
