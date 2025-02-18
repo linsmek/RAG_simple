@@ -5,6 +5,7 @@ Created on Tue Jan  7 16:15:41 2025
 """
 
 
+
 import os
 import re
 import shutil
@@ -320,6 +321,7 @@ def main():
         )
         chunk_overlap = int(chunk_size * 0.2)
         temperature = st.slider("Model Temperature", min_value=0.1, max_value=1.0, value=0.5, step=0.1)
+
         # File uploader
         uploaded_files = st.file_uploader(
             "**📑 Upload PDF files for Q&A**", 
@@ -347,6 +349,7 @@ def main():
             shutil.rmtree(CHROMA_DB_PATH, ignore_errors=True)
         st.write("Chat history and vector stores have been cleared. Please refresh or ask a new question to start fresh.")
 
+    # Display existing messages
     for msg in st.session_state.messages:
         if msg["role"] == "system":
             with st.chat_message("system"):
@@ -358,20 +361,30 @@ def main():
             with st.chat_message("assistant"):
                 st.markdown(msg["content"])
 
+    # Get user query
     user_query = st.chat_input("Ask a question about your documents (or anything else)...")
     if user_query:
+        # Convert raw string to a HumanMessage
         wrapped_query = human_message(user_query)
-        st.session_state.messages.append({"role": "user", "content": user_query})
+        
+        # Add user message to session state and UI
+        st.session_state.messages.append({"role": "user", "content": wrapped_query.content})
         with st.chat_message("user"):
-            st.markdown(user_query)
-        results = query_collection(user_query, space, backend)
+            st.markdown(wrapped_query.content)
+
+        # Query the vector store for context
+        results = query_collection(wrapped_query.content, space, backend)
         context_docs = results.get("documents", [[]])[0]
         concatenated_context = "\n\n".join(context_docs) if context_docs else ""
+
+        # Call LLM with summarized memory
         assistant_reply = call_llm_with_memory(
             context=concatenated_context,
-            prompt=user_query,
+            prompt=wrapped_query.content,
             temperature=temperature
         )
+
+        # Display the assistant's reply
         st.session_state.messages.append({"role": "assistant", "content": assistant_reply})
         with st.chat_message("assistant"):
             st.markdown(assistant_reply)
@@ -381,3 +394,4 @@ def main():
 # ---------------------------------------------------------------------------------
 if __name__ == "__main__":
     main()
+
