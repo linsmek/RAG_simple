@@ -3,9 +3,6 @@ Created on Tue Jan  7 16:15:41 2025
 
 @author: linamekouar
 """
-
-
-
 import os
 import re
 import shutil
@@ -293,7 +290,7 @@ Question: {prompt}
         memory=st.session_state.memory,  # This is now a summarized memory
         verbose=True
     )
-    response = chain.run(
+    response = chain.invoke(
         system_prompt=system_prompt,
         context=context,
         prompt=prompt
